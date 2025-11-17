@@ -1,9 +1,10 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen({ navigation }) {
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>ColorPlay</Text>
@@ -50,7 +51,7 @@ export default function HomeScreen({ navigation }) {
       >
         <Text style={styles.myWorksText}>내 작품 보기 →</Text>
       </TouchableOpacity>
-    </View>
+    </SafeAreaView>
   );
 }
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 // 샘플 저장된 퍼즐 데이터
 const SAVED_PUZZLES = [
@@ -10,7 +11,7 @@ const SAVED_PUZZLES = [
 
 export default function GalleryScreen({ navigation }) {
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -58,7 +59,7 @@ export default function GalleryScreen({ navigation }) {
           ))
         )}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

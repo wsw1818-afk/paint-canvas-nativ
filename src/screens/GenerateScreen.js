@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { processImage } from '../utils/imageProcessor';
 
@@ -85,7 +86,7 @@ export default function GenerateScreen({ route, navigation }) {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -160,7 +161,7 @@ export default function GenerateScreen({ route, navigation }) {
       <TouchableOpacity style={styles.generateButton} onPress={handleGenerate}>
         <Text style={styles.generateButtonText}>퍼즐 생성하기</Text>
       </TouchableOpacity>
-    </View>
+    </SafeAreaView>
   );
 }
 
