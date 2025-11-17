@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HomeScreen from './src/screens/HomeScreen';
 import GenerateScreen from './src/screens/GenerateScreen';
 import PlayScreen from './src/screens/PlayScreen';
@@ -34,5 +35,9 @@ export default function App() {
     }
   };
 
-  return renderScreen();
+  return (
+    <SafeAreaProvider>
+      {renderScreen()}
+    </SafeAreaProvider>
+  );
 }

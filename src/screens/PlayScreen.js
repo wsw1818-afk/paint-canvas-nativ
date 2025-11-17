@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ActivityIndicator, PanResponder, SafeAreaView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ActivityIndicator, PanResponder } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Canvas, Image, useImage, Rect, Group, Text as SkiaText, useFont } from '@shopify/react-native-skia';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -36,11 +37,8 @@ export default function PlayScreen({ route, navigation }) {
   // 터치 정보 저장
   const touchInfo = useRef({ touches: [] });
 
-  // Skia 이미지 로드 - sample 모드일 때 기본 이미지 사용
-  const effectiveImageUri = sourceType === 'sample'
-    ? require('../../assets/icon.png')
-    : imageUri;
-  const image = useImage(effectiveImageUri);
+  // Skia 이미지 로드 - sample 모드일 때는 이미지 없이 격자만 표시
+  const image = useImage(imageUri);
 
   // 초기 격자 생성
   useEffect(() => {
