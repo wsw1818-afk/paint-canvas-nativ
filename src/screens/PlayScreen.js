@@ -208,7 +208,7 @@ export default function PlayScreen({ route, navigation }) {
   const progress = Math.round((grid.filter(c => c.filled).length / grid.length) * 100);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -286,13 +286,13 @@ export default function PlayScreen({ route, navigation }) {
                     />
 
                     {/* 색상 코드 레이블 (채워지지 않은 경우만) */}
-                    {!cell.filled && (
+                    {!cell.filled && cellWidth > 10 && (
                       <SkiaText
                         x={x + cellWidth / 2}
-                        y={y + cellHeight / 2}
+                        y={y + cellHeight / 2 + (cellWidth * 0.15)}
                         text={cell.targetColor}
                         color="#666"
-                        size={Math.max(8, cellWidth * 0.4)}
+                        size={Math.max(6, Math.min(cellWidth * 0.4, 14))}
                       />
                     )}
                   </Group>
@@ -401,7 +401,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   paletteContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 32,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',

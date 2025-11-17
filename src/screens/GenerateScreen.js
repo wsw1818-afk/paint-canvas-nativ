@@ -86,7 +86,7 @@ export default function GenerateScreen({ route, navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -283,7 +283,9 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   generateButton: {
-    margin: 24,
+    marginHorizontal: 24,
+    marginTop: 24,
+    marginBottom: 40,
     padding: 20,
     backgroundColor: '#A255FF',
     borderRadius: 16,

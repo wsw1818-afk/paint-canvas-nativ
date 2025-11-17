@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen({ navigation }) {
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>ColorPlay</Text>
@@ -113,7 +113,9 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   myWorksButton: {
-    margin: 24,
+    marginHorizontal: 24,
+    marginTop: 24,
+    marginBottom: 40,
     padding: 20,
     backgroundColor: '#A255FF',
     borderRadius: 16,
