@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ActivityIndicator, PanResponder } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Alert, ActivityIndicator, PanResponder, SafeAreaView } from 'react-native';
 import { Canvas, Image, useImage, Rect, Group, Text as SkiaText, useFont } from '@shopify/react-native-skia';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -36,8 +36,11 @@ export default function PlayScreen({ route, navigation }) {
   // 터치 정보 저장
   const touchInfo = useRef({ touches: [] });
 
-  // Skia 이미지 로드
-  const image = useImage(imageUri);
+  // Skia 이미지 로드 - sample 모드일 때 기본 이미지 사용
+  const effectiveImageUri = sourceType === 'sample'
+    ? require('../../assets/icon.png')
+    : imageUri;
+  const image = useImage(effectiveImageUri);
 
   // 초기 격자 생성
   useEffect(() => {
@@ -128,8 +131,8 @@ export default function PlayScreen({ route, navigation }) {
         touchInfo.current.touches = touches;
 
         if (touches.length === 1) {
-          // 단일 터치 - 색칠 모드
-          const cell = getCellFromPosition(touches[0].pageX, touches[0].pageY);
+          // 단일 터치 - 색칠 모드 (locationX/Y는 canvas 컨테이너 기준)
+          const cell = getCellFromPosition(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
           if (cell) {
             fillCell(cell.row, cell.col);
           }
@@ -146,8 +149,8 @@ export default function PlayScreen({ route, navigation }) {
         const touches = evt.nativeEvent.touches;
 
         if (touches.length === 1) {
-          // 드래그하면서 색칠
-          const cell = getCellFromPosition(touches[0].pageX, touches[0].pageY);
+          // 드래그하면서 색칠 (locationX/Y는 canvas 컨테이너 기준)
+          const cell = getCellFromPosition(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
           if (cell) {
             fillCell(cell.row, cell.col);
           }
@@ -207,7 +210,7 @@ export default function PlayScreen({ route, navigation }) {
   const progress = Math.round((grid.filter(c => c.filled).length / grid.length) * 100);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -333,7 +336,7 @@ export default function PlayScreen({ route, navigation }) {
           ))}
         </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
