@@ -1,1 +1,1 @@
-📝 재발 방지 스크립트 추가: 빌드 전 자동 검증 + 문제 자동 수정
+🔧 build.gradle 최종 수정: expo-modules-core를 compileOnly로 변경 (버전 제거)
