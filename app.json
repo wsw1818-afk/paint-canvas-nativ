@@ -43,8 +43,6 @@
       }
     },
     "owner": "wisangwon1",
-    "plugins": [
-      "./app.plugin.js"
     ]
   }
 }
