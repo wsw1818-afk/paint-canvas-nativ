@@ -1,1 +1,1 @@
-🔧 Config Plugin을 Expo Autolinking으로 전환: build.gradle + expo-module.config.json 추가
+📚 EAS 빌드 가이드 및 검증 스크립트 추가: 재발 방지
