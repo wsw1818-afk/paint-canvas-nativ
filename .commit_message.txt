@@ -1,1 +1,1 @@
-🔧 @expo/config-plugins를 dependencies로 이동: EAS 빌드 시 플러그인 실행 보장
+🔧 Config Plugin을 Expo Autolinking으로 전환: build.gradle + expo-module.config.json 추가
