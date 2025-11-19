@@ -1,1 +1,1 @@
-🔧 .easignore 수정: .git 폴더 업로드하여 최신 커밋 사용
+🔧 build.gradle 수정: expo-modules-core 버전 명시 (3.0.+) + repositories 추가
