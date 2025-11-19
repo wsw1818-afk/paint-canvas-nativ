@@ -1,9 +1,9 @@
 # Node modules는 EAS가 클라우드에서 다시 설치함
 node_modules/
 
-# Git 관련
-.git/
-.gitignore
+# Git 관련 - .git은 EAS가 커밋 정보를 위해 필요함
+# .git/
+# .gitignore
 
 # IDE
 .vscode/
