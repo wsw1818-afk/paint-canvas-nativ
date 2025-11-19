@@ -20,9 +20,9 @@ yarn-error.log*
 .expo-shared/
 *.cache
 
-# 빌드 결과물 (로컬)
-android/
-ios/
+# 빌드 결과물 (로컬) - 루트 레벨만 제외
+/android/
+/ios/
 web-build/
 
 # 테스트
