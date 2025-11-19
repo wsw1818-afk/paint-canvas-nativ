@@ -40,6 +40,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     fun setCells(cellList: List<Map<String, Any>>) {
+        android.util.Log.d("PaintCanvas", "setCells called with ${cellList.size} cells")
         cells = cellList.map { cellMap ->
             CellData(
                 row = (cellMap["row"] as? Number)?.toInt() ?: 0,
@@ -56,6 +57,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             targetColorMap[key] = cell.targetColorHex
             labelMap[key] = cell.label
         }
+        android.util.Log.d("PaintCanvas", "labelMap size: ${labelMap.size}, first 5: ${labelMap.entries.take(5)}")
         invalidate()
     }
 
@@ -145,6 +147,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
+        android.util.Log.d("PaintCanvas", "onDraw: gridSize=$gridSize, labelMap.size=${labelMap.size}, cellSize=$cellSize")
+
         // Apply transformation matrix
         canvas.save()
         matrix.reset()
@@ -193,13 +197,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        android.util.Log.d("PaintCanvas", "onTouchEvent: action=${event.actionMasked}, pointerCount=${event.pointerCount}, touchMode=$touchMode")
+
         // Only pass to scale detector if multi-touch
         if (event.pointerCount >= 2) {
+            android.util.Log.d("PaintCanvas", "Passing to scaleGestureDetector")
             scaleGestureDetector.onTouchEvent(event)
         }
 
         // Skip single-touch handling if currently zooming
         if (touchMode == TouchMode.ZOOM) {
+            android.util.Log.d("PaintCanvas", "In ZOOM mode, skipping single-touch")
             return true
         }
 
