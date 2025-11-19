@@ -1,1 +1,1 @@
-🔧 build.gradle 수정: expo-modules-core 버전 명시 (3.0.+) + repositories 추가
+📝 재발 방지 스크립트 추가: 빌드 전 자동 검증 + 문제 자동 수정
