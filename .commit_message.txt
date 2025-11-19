@@ -1,1 +1,1 @@
-🔧 build.gradle에서 expo-modules-core 의존성 제거 (Autolinking에 완전 위임)
+🔧 modules/paint-canvas/package.json 원복: 중복 expo config 제거로 Autolinking 충돌 해결
