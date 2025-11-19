@@ -1,1 +1,1 @@
-🔧 build.gradle 수정: expo-modules-core에 명시적 버전 3.0.26 지정 + repositories 추가
+📦 paint-canvas-native를 GitHub repository로 전환: node_modules에서 Autolinking 작동 보장

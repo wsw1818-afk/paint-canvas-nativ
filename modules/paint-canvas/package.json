@@ -1,6 +1,36 @@
 {
   "name": "paint-canvas-native",
   "version": "1.0.0",
+  "description": "Expo native module for paint by numbers canvas with touch painting",
   "main": "src/index.tsx",
-  "types": "src/index.tsx"
+  "types": "src/index.tsx",
+  "scripts": {
+    "test": "echo \"No tests specified\""
+  },
+  "keywords": [
+    "expo",
+    "expo-module",
+    "react-native",
+    "paint",
+    "canvas",
+    "android"
+  ],
+  "author": "wisangwon1",
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": ">=51.0.0",
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wisangwon1/paint-canvas-native.git"
+  },
+  "files": [
+    "src",
+    "android",
+    "expo-module.config.json",
+    "README.md"
+  ]
 }
