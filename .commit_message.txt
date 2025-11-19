@@ -1,1 +1,1 @@
-🔧 플러그인 의존성 수정: @expo/config-plugins를 루트 devDependencies로 이동
+🐛 플러그인 디버깅 로깅 추가: EAS 빌드 실패 원인 추적

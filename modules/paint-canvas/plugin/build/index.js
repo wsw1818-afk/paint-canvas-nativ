@@ -44,6 +44,9 @@ const withPaintCanvas = (config) => {
             const projectRoot = config.modRequest.projectRoot;
             const modulePath = path.join(projectRoot, 'modules', 'paint-canvas', 'android');
             const targetPath = path.join(config.modRequest.platformProjectRoot, 'app', 'src', 'main', 'java', 'com', 'paintcanvas');
+            console.log(`[PaintCanvas Plugin] projectRoot: ${projectRoot}`);
+            console.log(`[PaintCanvas Plugin] modulePath: ${modulePath}`);
+            console.log(`[PaintCanvas Plugin] targetPath: ${targetPath}`);
             // 디렉토리 생성
             if (!fs.existsSync(targetPath)) {
                 fs.mkdirSync(targetPath, { recursive: true });
@@ -55,7 +58,15 @@ const withPaintCanvas = (config) => {
                 'PaintCanvasPackage.kt'
             ];
             // 소스 디렉토리 존재 확인
+            console.log(`[PaintCanvas Plugin] Checking if modulePath exists: ${modulePath}`);
+            console.log(`[PaintCanvas Plugin] modulePath exists: ${fs.existsSync(modulePath)}`);
             if (!fs.existsSync(modulePath)) {
+                // 디렉토리 내용 확인
+                const parentDir = path.dirname(modulePath);
+                console.log(`[PaintCanvas Plugin] Parent dir: ${parentDir}`);
+                if (fs.existsSync(parentDir)) {
+                    console.log(`[PaintCanvas Plugin] Parent dir contents:`, fs.readdirSync(parentDir));
+                }
                 throw new Error(`PaintCanvas native module directory not found: ${modulePath}`);
             }
             files.forEach(file => {
