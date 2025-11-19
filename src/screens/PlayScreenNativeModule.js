@@ -47,7 +47,7 @@ const COLOR_PALETTE = [
 
 export default function PlayScreenNativeModule({ route, navigation }) {
   const { imageUri, colorCount = 36, gridColors } = route.params || {};
-  const gridSize = 60;
+  const gridSize = 100;
 
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const [score, setScore] = useState(100);
@@ -72,6 +72,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           row,
           col,
           targetColorHex,
+          label: targetColorId, // Alphabet label
         });
       }
     }
@@ -112,6 +113,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           gridSize={gridSize}
           cells={cells}
           selectedColorHex={selectedColor.hex}
+          selectedLabel={selectedColor.id}
           imageUri={imageUri}
           onCellPainted={handleCellPainted}
         />

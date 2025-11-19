@@ -20,6 +20,10 @@ class PaintCanvasModule : Module() {
         view.setSelectedColor(colorHex)
       }
 
+      Prop("selectedLabel") { view: PaintCanvasView, label: String ->
+        view.setSelectedLabel(label)
+      }
+
       Prop("imageUri") { view: PaintCanvasView, uri: String ->
         view.setImageUri(uri)
       }

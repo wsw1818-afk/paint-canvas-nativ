@@ -4,15 +4,18 @@ import android.content.Context
 import android.graphics.*
 import android.net.Uri
 import android.view.MotionEvent
-import android.view.View
+import android.view.ScaleGestureDetector
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import kotlin.math.max
+import kotlin.math.min
 
 data class CellData(
     val row: Int,
     val col: Int,
-    val targetColorHex: String
+    val targetColorHex: String,
+    val label: String
 )
 
 class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
@@ -24,14 +27,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         color = Color.parseColor("#E0E0E0")
     }
 
-    private var gridSize: Int = 60
+    private var gridSize: Int = 100
     private var cells: List<CellData> = emptyList()
     private var selectedColorHex: String = "#FF0000"
+    private var selectedLabel: String = "A"
     private var imageUri: String? = null
 
     fun setGridSize(value: Int) {
         gridSize = value
-        cellSize = width.toFloat() / gridSize
+        cellSize = canvasWidth / gridSize
         invalidate()
     }
 
@@ -40,13 +44,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             CellData(
                 row = (cellMap["row"] as? Number)?.toInt() ?: 0,
                 col = (cellMap["col"] as? Number)?.toInt() ?: 0,
-                targetColorHex = cellMap["targetColorHex"] as? String ?: "#000000"
+                targetColorHex = cellMap["targetColorHex"] as? String ?: "#000000",
+                label = cellMap["label"] as? String ?: "A"
             )
         }
-        // targetColorMap 생성
+        // targetColorMap 및 labelMap 생성
         targetColorMap.clear()
+        labelMap.clear()
         cells.forEach { cell ->
-            targetColorMap["${cell.row}-${cell.col}"] = cell.targetColorHex
+            val key = "${cell.row}-${cell.col}"
+            targetColorMap[key] = cell.targetColorHex
+            labelMap[key] = cell.label
         }
         invalidate()
     }
@@ -55,119 +63,256 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         selectedColorHex = colorHex
     }
 
+    fun setSelectedLabel(label: String) {
+        selectedLabel = label
+    }
+
     fun setImageUri(uri: String) {
         imageUri = uri
         backgroundBitmap = loadBitmap(uri)
         invalidate()
     }
 
+    private var canvasWidth: Float = 600f
     private var cellSize: Float = 0f
     private val filledCells = mutableSetOf<String>() // "row-col"
     private val targetColorMap = mutableMapOf<String, String>() // "row-col" -> hex
+    private val labelMap = mutableMapOf<String, String>() // "row-col" -> label
     private var backgroundBitmap: Bitmap? = null
 
-    private var lastTouchedRow = -1
-    private var lastTouchedCol = -1
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        textAlign = Paint.Align.CENTER
+        style = Paint.Style.FILL
+    }
+
+    private val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    // Zoom and Pan variables
+    private val matrix = Matrix()
+    private var scaleFactor = 1f
+    private var translateX = 0f
+    private var translateY = 0f
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var activePointerId = -1
+    private enum class TouchMode { NONE, DRAG, ZOOM }
+    private var touchMode = TouchMode.NONE
+
+    private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val prevScale = scaleFactor
+            scaleFactor *= detector.scaleFactor
+            scaleFactor = max(1f, min(scaleFactor, 5f))
+
+            // Adjust translation to zoom towards focus point
+            val focusX = detector.focusX
+            val focusY = detector.focusY
+            val scaleDelta = scaleFactor / prevScale
+
+            translateX = focusX - (focusX - translateX) * scaleDelta
+            translateY = focusY - (focusY - translateY) * scaleDelta
+
+            applyBoundaries()
+            invalidate()
+            return true
+        }
+
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            touchMode = TouchMode.ZOOM
+            return true
+        }
+
+        override fun onScaleEnd(detector: ScaleGestureDetector) {
+            touchMode = TouchMode.NONE
+        }
+    })
 
     init {
         setWillNotDraw(false)
+        cellSize = canvasWidth / gridSize
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        cellSize = w.toFloat() / gridSize
+        canvasWidth = w.toFloat()
+        cellSize = canvasWidth / gridSize
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        // 배경 이미지 그리기
+        // Apply transformation matrix
+        canvas.save()
+        matrix.reset()
+        matrix.postScale(scaleFactor, scaleFactor)
+        matrix.postTranslate(translateX, translateY)
+        canvas.setMatrix(matrix)
+
+        // 1. Draw background image
         backgroundBitmap?.let {
-            val dest = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            val dest = RectF(0f, 0f, canvasWidth, canvasWidth)
             canvas.drawBitmap(it, null, dest, null)
         }
 
-        // 격자 그리기
-        for (i in 0..gridSize) {
-            val pos = i * cellSize
-            canvas.drawLine(pos, 0f, pos, height.toFloat(), gridPaint)
-            canvas.drawLine(0f, pos, width.toFloat(), pos, gridPaint)
-        }
+        // 2. Draw white cover + alphabet labels on unfilled cells
+        for (row in 0 until gridSize) {
+            for (col in 0 until gridSize) {
+                val cellKey = "$row-$col"
 
-        // 채워진 셀 그리기
-        filledCells.forEach { cellKey ->
-            val parts = cellKey.split("-")
-            val row = parts[0].toInt()
-            val col = parts[1].toInt()
+                if (!filledCells.contains(cellKey)) {
+                    val left = col * cellSize
+                    val top = row * cellSize
+                    val right = left + cellSize
+                    val bottom = top + cellSize
 
-            val left = col * cellSize
-            val top = row * cellSize
+                    // White cover
+                    canvas.drawRect(left, top, right, bottom, coverPaint)
 
-            // 배경 이미지가 있으면 해당 부분 크롭하여 그리기
-            backgroundBitmap?.let { bitmap ->
-                val src = Rect(
-                    left.toInt(),
-                    top.toInt(),
-                    (left + cellSize).toInt(),
-                    (top + cellSize).toInt()
-                )
-                val dest = RectF(left, top, left + cellSize, top + cellSize)
-                canvas.drawBitmap(bitmap, src, dest, null)
+                    // Alphabet label
+                    val label = labelMap[cellKey] ?: "A"
+                    textPaint.textSize = cellSize * 0.5f
+                    val xPos = left + cellSize / 2f
+                    val yPos = top + cellSize / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                    canvas.drawText(label, xPos, yPos, textPaint)
+                }
             }
         }
+
+        // 3. Draw grid
+        for (i in 0..gridSize) {
+            val pos = i * cellSize
+            canvas.drawLine(pos, 0f, pos, canvasWidth, gridPaint)
+            canvas.drawLine(0f, pos, canvasWidth, pos, gridPaint)
+        }
+
+        canvas.restore()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                val col = (event.x / cellSize).toInt()
-                val row = (event.y / cellSize).toInt()
+        // Only pass to scale detector if multi-touch
+        if (event.pointerCount >= 2) {
+            scaleGestureDetector.onTouchEvent(event)
+        }
 
-                // 유효 범위 체크
-                if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) {
-                    return true
+        // Skip single-touch handling if currently zooming
+        if (touchMode == TouchMode.ZOOM) {
+            return true
+        }
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (event.pointerCount == 1) {
+                    touchMode = TouchMode.DRAG
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    activePointerId = event.getPointerId(0)
+
+                    // Always try painting on single touch
+                    handlePainting(event.x, event.y)
                 }
-
-                // 중복 터치 방지
-                if (row == lastTouchedRow && col == lastTouchedCol) {
-                    return true
-                }
-
-                lastTouchedRow = row
-                lastTouchedCol = col
-
-                val cellKey = "$row-$col"
-
-                // 이미 채워진 셀은 스킵
-                if (filledCells.contains(cellKey)) {
-                    return true
-                }
-
-                // 색상 검증
-                val targetColor = targetColorMap[cellKey]
-                val isCorrect = targetColor == selectedColorHex
-
-                if (isCorrect) {
-                    // 셀 채우기 (즉시 반영)
-                    filledCells.add(cellKey)
-                    invalidate() // 즉시 재그리기 - 펜처럼 반응!
-
-                    // JS로 이벤트 전송 (점수 업데이트용)
-                    sendCellPaintedEvent(row, col, true)
-                } else {
-                    // 틀린 색상 - 점수 감점만
-                    sendCellPaintedEvent(row, col, false)
-                }
-
-                return true
             }
-            MotionEvent.ACTION_UP -> {
-                lastTouchedRow = -1
-                lastTouchedCol = -1
-                return true
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // Second finger down - switch to zoom/pan mode
+                scaleGestureDetector.onTouchEvent(event)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (touchMode == TouchMode.DRAG && event.pointerCount == 1) {
+                    if (scaleFactor > 1.01f) {
+                        // Pan mode when zoomed
+                        val dx = event.x - lastTouchX
+                        val dy = event.y - lastTouchY
+
+                        translateX += dx
+                        translateY += dy
+
+                        lastTouchX = event.x
+                        lastTouchY = event.y
+
+                        applyBoundaries()
+                        invalidate()
+                    } else {
+                        // Painting mode when not zoomed
+                        handlePainting(event.x, event.y)
+                    }
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                touchMode = TouchMode.NONE
+                activePointerId = -1
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                // If we had 2+ fingers and one lifted, check remaining count
+                if (event.pointerCount <= 2) {
+                    touchMode = TouchMode.NONE
+                }
             }
         }
-        return super.onTouchEvent(event)
+
+        return true
+    }
+
+    private fun handlePainting(screenX: Float, screenY: Float) {
+        // Convert screen coordinates to canvas coordinates
+        val inverseMatrix = Matrix()
+        matrix.invert(inverseMatrix)
+        val points = floatArrayOf(screenX, screenY)
+        inverseMatrix.mapPoints(points)
+
+        val canvasX = points[0]
+        val canvasY = points[1]
+
+        val col = (canvasX / cellSize).toInt()
+        val row = (canvasY / cellSize).toInt()
+
+        // Validate bounds
+        if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) {
+            return
+        }
+
+        val cellKey = "$row-$col"
+
+        // Skip already filled cells
+        if (filledCells.contains(cellKey)) {
+            return
+        }
+
+        // Check if label matches selected label
+        val cellLabel = labelMap[cellKey]
+        val isCorrect = cellLabel == selectedLabel
+
+        if (isCorrect) {
+            // Fill cell immediately
+            filledCells.add(cellKey)
+            invalidate() // Instant redraw - no delay!
+
+            // Send event to JS
+            sendCellPaintedEvent(row, col, true)
+        } else {
+            // Wrong label - send negative feedback
+            sendCellPaintedEvent(row, col, false)
+        }
+    }
+
+    private fun applyBoundaries() {
+        val scaledWidth = canvasWidth * scaleFactor
+        val scaledHeight = canvasWidth * scaleFactor
+
+        // Limit translation to keep content visible
+        val maxTranslateX = 0f
+        val minTranslateX = width.toFloat() - scaledWidth
+        val maxTranslateY = 0f
+        val minTranslateY = height.toFloat() - scaledHeight
+
+        translateX = max(minTranslateX, min(maxTranslateX, translateX))
+        translateY = max(minTranslateY, min(maxTranslateY, translateY))
     }
 
     private fun sendCellPaintedEvent(row: Int, col: Int, correct: Boolean) {
@@ -183,7 +328,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val uri = Uri.parse(uriString)
             val inputStream = context.contentResolver.openInputStream(uri)
             BitmapFactory.decodeStream(inputStream)?.let { bitmap ->
-                // 600x600으로 스케일
+                // Scale to 600x600
                 Bitmap.createScaledBitmap(bitmap, 600, 600, true)
             }
         } catch (e: Exception) {
