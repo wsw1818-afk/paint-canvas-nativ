@@ -13,44 +13,27 @@ export default function HomeScreen({ navigation }) {
 
       {/* Main Content */}
       <View style={styles.content}>
-        {/* Sample Button */}
-        <TouchableOpacity
-          style={[styles.button, styles.sampleButton]}
-          onPress={() => navigation.navigate('Generate', { sourceType: 'sample' })}
-        >
-          <Text style={styles.buttonIcon}>🎨</Text>
-          <Text style={styles.buttonText}>샘플로 시작하기</Text>
-          <Text style={styles.buttonSubtext}>연습용 이미지로 퍼즐 만들기</Text>
-        </TouchableOpacity>
-
-        {/* Gallery Button */}
+        {/* Gallery View Button */}
         <TouchableOpacity
           style={[styles.button, styles.galleryButton]}
-          onPress={() => navigation.navigate('Generate', { sourceType: 'gallery' })}
+          onPress={() => navigation.navigate('Gallery')}
         >
           <Text style={styles.buttonIcon}>🖼️</Text>
-          <Text style={styles.buttonText}>갤러리에서 선택</Text>
-          <Text style={styles.buttonSubtext}>내 사진으로 퍼즐 만들기</Text>
+          <Text style={styles.buttonText}>갤러리</Text>
+          <Text style={styles.buttonSubtext}>격자 적용된 사진 보기</Text>
         </TouchableOpacity>
 
-        {/* Camera Button */}
+        {/* Create Puzzle Button */}
         <TouchableOpacity
-          style={[styles.button, styles.cameraButton]}
-          onPress={() => navigation.navigate('Generate', { sourceType: 'camera' })}
+          style={[styles.button, styles.savedButton]}
+          onPress={() => navigation.navigate('Generate', { sourceType: 'gallery' })}
         >
-          <Text style={styles.buttonIcon}>📸</Text>
-          <Text style={styles.buttonText}>사진 찍기</Text>
-          <Text style={styles.buttonSubtext}>카메라로 퍼즐 만들기</Text>
+          <Text style={styles.buttonIcon}>📂</Text>
+          <Text style={styles.buttonText}>격자 적용된 퍼즐</Text>
+          <Text style={styles.buttonSubtext}>사진을 격자로 변환하기</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Footer */}
-      <TouchableOpacity
-        style={styles.myWorksButton}
-        onPress={() => navigation.navigate('Gallery')}
-      >
-        <Text style={styles.myWorksText}>내 작품 보기 →</Text>
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -86,17 +69,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     marginBottom: 16,
   },
-  sampleButton: {
-    borderLeftWidth: 6,
-    borderLeftColor: '#A255FF',
-  },
   galleryButton: {
     borderLeftWidth: 6,
     borderLeftColor: '#5AB9EA',
   },
-  cameraButton: {
+  savedButton: {
     borderLeftWidth: 6,
-    borderLeftColor: '#FFC300',
+    borderLeftColor: '#FFD700',
   },
   buttonIcon: {
     fontSize: 48,
@@ -111,19 +90,5 @@ const styles = StyleSheet.create({
   buttonSubtext: {
     fontSize: 14,
     color: '#666',
-  },
-  myWorksButton: {
-    marginHorizontal: 24,
-    marginTop: 24,
-    marginBottom: 40,
-    padding: 20,
-    backgroundColor: '#A255FF',
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-  myWorksText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
   },
 });

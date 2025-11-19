@@ -1,1 +1,1 @@
-🐛 플러그인 에러 핸들링 개선: 파일 누락 시 명확한 에러 + 로깅 추가
+🔧 플러그인 의존성 수정: @expo/config-plugins를 루트 devDependencies로 이동

@@ -1,15 +1,42 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-// 샘플 저장된 퍼즐 데이터
-const SAVED_PUZZLES = [
-  { id: 1, title: '샘플 퍼즐 1', difficulty: '쉬움', progress: 100, completed: true, color: '#4CD964' },
-  { id: 2, title: '샘플 퍼즐 2', difficulty: '보통', progress: 65, completed: false, color: '#5AB9EA' },
-  { id: 3, title: '샘플 퍼즐 3', difficulty: '어려움', progress: 30, completed: false, color: '#FF5757' },
-];
+import { loadPuzzles, deletePuzzle } from '../utils/puzzleStorage';
 
 export default function GalleryScreen({ navigation }) {
+  const [puzzles, setPuzzles] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadSavedPuzzles();
+  }, []);
+
+  const loadSavedPuzzles = async () => {
+    try {
+      const savedPuzzles = await loadPuzzles();
+      setPuzzles(savedPuzzles);
+    } catch (error) {
+      console.error('퍼즐 로드 실패:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeletePuzzle = async (puzzleId) => {
+    try {
+      await deletePuzzle(puzzleId);
+      await loadSavedPuzzles();
+    } catch (error) {
+      console.error('퍼즐 삭제 실패:', error);
+    }
+  };
+
+  const getDifficultyInfo = (colors) => {
+    if (colors <= 12) return { name: '쉬움', color: '#4CD964' };
+    if (colors <= 24) return { name: '보통', color: '#5AB9EA' };
+    return { name: '어려움', color: '#FF5757' };
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
@@ -17,46 +44,54 @@ export default function GalleryScreen({ navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backButton}>← 뒤로</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>내 작품</Text>
+        <Text style={styles.title}>갤러리</Text>
       </View>
 
       {/* Puzzle List */}
       <ScrollView style={styles.content}>
-        {SAVED_PUZZLES.length === 0 ? (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#A255FF" />
+            <Text style={styles.loadingText}>불러오는 중...</Text>
+          </View>
+        ) : puzzles.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>🎨</Text>
-            <Text style={styles.emptyTitle}>아직 퍼즐이 없습니다</Text>
-            <Text style={styles.emptyDesc}>홈 화면에서 퍼즐을 만들어보세요!</Text>
+            <Text style={styles.emptyTitle}>완료된 작품이 없습니다</Text>
+            <Text style={styles.emptyDesc}>격자 적용된 퍼즐에서 작업을 완료하면 여기에 저장됩니다</Text>
           </View>
         ) : (
-          SAVED_PUZZLES.map((puzzle) => (
-            <TouchableOpacity
-              key={puzzle.id}
-              style={styles.puzzleCard}
-              onPress={() => navigation.navigate('Play', { puzzleId: puzzle.id })}
-            >
-              <View style={[styles.difficultyBadge, { backgroundColor: puzzle.color }]}>
-                <Text style={styles.difficultyText}>{puzzle.difficulty}</Text>
-              </View>
-
-              <View style={styles.puzzleInfo}>
-                <Text style={styles.puzzleTitle}>{puzzle.title}</Text>
-                <Text style={styles.puzzleProgress}>{puzzle.progress}% 완성</Text>
-                {!puzzle.completed && (
-                  <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { flex: puzzle.progress / 100, backgroundColor: puzzle.color }]} />
-                    <View style={{ flex: (100 - puzzle.progress) / 100 }} />
+          puzzles.map((puzzle) => {
+            const difficultyInfo = getDifficultyInfo(puzzle.colorCount || 12);
+            return (
+              <View key={puzzle.id} style={styles.puzzleCard}>
+                <TouchableOpacity
+                  style={styles.puzzleCardContent}
+                  onPress={() => navigation.navigate('Play', {
+                    imageUri: puzzle.imageUri || puzzle.imageBase64,  // file:// URI 전달 (하위 호환성 유지)
+                    colorCount: puzzle.colorCount,
+                    gridColors: puzzle.gridColors
+                  })}
+                >
+                  <View style={[styles.difficultyBadge, { backgroundColor: difficultyInfo.color }]}>
+                    <Text style={styles.difficultyText}>{difficultyInfo.name}</Text>
                   </View>
-                )}
-              </View>
 
-              <View style={[styles.statusBadge, { backgroundColor: puzzle.completed ? '#4CD964' : '#5AB9EA' }]}>
-                <Text style={styles.statusText}>
-                  {puzzle.completed ? '완성' : `${puzzle.progress}%`}
-                </Text>
+                  <View style={styles.puzzleInfo}>
+                    <Text style={styles.puzzleTitle}>{puzzle.title || '제목 없음'}</Text>
+                    <Text style={styles.puzzleSubtext}>{puzzle.colorCount}가지 색상</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeletePuzzle(puzzle.id)}
+                >
+                  <Text style={styles.deleteButtonText}>🗑️</Text>
+                </TouchableOpacity>
               </View>
-            </TouchableOpacity>
-          ))
+            );
+          })
         )}
       </ScrollView>
     </SafeAreaView>
@@ -107,10 +142,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#999',
   },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 100,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 12,
+  },
   puzzleCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
     marginBottom: 12,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -119,6 +163,20 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  puzzleCardContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  deleteButton: {
+    padding: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteButtonText: {
+    fontSize: 24,
   },
   difficultyBadge: {
     width: 80,
@@ -142,29 +200,8 @@ const styles = StyleSheet.create({
     color: '#1C1B1F',
     marginBottom: 4,
   },
-  puzzleProgress: {
+  puzzleSubtext: {
     fontSize: 13,
     color: '#666',
-    marginBottom: 8,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#E0E0E0',
-    borderRadius: 2,
-    flexDirection: 'row',
-  },
-  progressFill: {
-    height: 4,
-    borderRadius: 2,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
   },
 });

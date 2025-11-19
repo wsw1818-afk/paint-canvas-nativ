@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system/legacy';
 import { processImage } from '../utils/imageProcessor';
+import { savePuzzle } from '../utils/puzzleStorage';
 
 const DIFFICULTIES = [
-  { id: 'EASY', name: '쉬움', colors: 5, color: '#4CD964' },
-  { id: 'NORMAL', name: '보통', colors: 8, color: '#5AB9EA' },
-  { id: 'HARD', name: '어려움', colors: 12, color: '#FF5757' },
+  { id: 'EASY', name: '쉬움', colors: 12, color: '#4CD964' },
+  { id: 'NORMAL', name: '보통', colors: 24, color: '#5AB9EA' },
+  { id: 'HARD', name: '어려움', colors: 36, color: '#FF5757' },
 ];
 
 export default function GenerateScreen({ route, navigation }) {
@@ -50,17 +53,15 @@ export default function GenerateScreen({ route, navigation }) {
           return;
         }
         result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes: ['images'],
           allowsEditing: true,
           quality: 0.8,
         });
       }
 
       if (!result.canceled && result.assets[0]) {
-        setLoading(true);
-        const processed = await processImage(result.assets[0].uri);
-        setSelectedImage(processed);
-        setLoading(false);
+        // 이미지 URI만 저장, 처리는 나중에
+        setSelectedImage({ uri: result.assets[0].uri });
       }
     } catch (error) {
       setLoading(false);
@@ -69,20 +70,75 @@ export default function GenerateScreen({ route, navigation }) {
     }
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!selectedImage && sourceType !== 'sample') {
       Alert.alert('이미지 선택', '먼저 이미지를 선택해주세요.');
       return;
     }
 
-    const difficulty = DIFFICULTIES.find(d => d.id === selectedDifficulty);
+    try {
+      setLoading(true);
+      const difficulty = DIFFICULTIES.find(d => d.id === selectedDifficulty);
 
-    navigation.navigate('Play', {
-      difficulty: selectedDifficulty,
-      colorCount: difficulty.colors,
-      imageUri: selectedImage?.uri || null,
-      sourceType
-    });
+      console.log('원본 이미지 URI:', selectedImage.uri);
+
+      // 1단계: 이미지를 600x600으로 리사이즈 (PlayScreen의 gridPixelSize와 동일)
+      const resizedImage = await manipulateAsync(
+        selectedImage.uri,
+        [{ resize: { width: 600, height: 600 } }],
+        { compress: 0.9, format: SaveFormat.PNG }
+      );
+
+      console.log('리사이즈 완료:', resizedImage.uri);
+
+      // 2단계: 리사이즈된 이미지를 영구 저장소에 복사
+      const timestamp = Date.now();
+      const fileName = `puzzle_${timestamp}.png`;
+      const permanentUri = `${FileSystem.documentDirectory}${fileName}`;
+
+      await FileSystem.copyAsync({
+        from: resizedImage.uri,
+        to: permanentUri
+      });
+
+      console.log('이미지 파일로 저장 완료:', permanentUri);
+
+      // 3단계: 이미지를 격자로 처리하여 색상 추출
+      const processedImage = await processImage(
+        permanentUri,  // 저장된 파일 경로 사용
+        60,  // gridSize - 60x60 격자 (세밀한 그리기)
+        difficulty.colors
+      );
+
+      console.log('이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
+
+      const puzzleData = {
+        title: `퍼즐 ${new Date().toLocaleString('ko-KR')}`,
+        imageUri: permanentUri,  // file:// URI로 저장
+        colorCount: difficulty.colors,
+        difficulty: selectedDifficulty,
+        gridColors: processedImage.gridColors,  // 격자별 색상 매핑 데이터
+      };
+
+      await savePuzzle(puzzleData);
+      setLoading(false);
+
+      // 격자 적용 완료 메시지 표시 후 갤러리로 이동
+      Alert.alert(
+        '격자 적용 완료',
+        '이미지가 저장되었습니다. 갤러리에서 확인하세요.',
+        [
+          {
+            text: '확인',
+            onPress: () => navigation.navigate('Gallery')
+          }
+        ]
+      );
+    } catch (error) {
+      setLoading(false);
+      console.error('퍼즐 저장 실패:', error);
+      Alert.alert('저장 실패', error.message || '이미지 저장 중 오류가 발생했습니다.');
+    }
   };
 
   return (
@@ -157,10 +213,22 @@ export default function GenerateScreen({ route, navigation }) {
         ))}
       </View>
 
-      {/* Generate Button */}
-      <TouchableOpacity style={styles.generateButton} onPress={handleGenerate}>
-        <Text style={styles.generateButtonText}>퍼즐 생성하기</Text>
-      </TouchableOpacity>
+      {/* Action Buttons */}
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity
+          style={[styles.generateButton, (!selectedImage || loading) && styles.generateButtonDisabled]}
+          onPress={handleGenerate}
+          disabled={!selectedImage || loading}
+        >
+          {loading ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={styles.generateButtonText}>
+              {selectedImage ? '격자 적용하기' : '이미지 선택 필요'}
+            </Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -282,14 +350,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
-  generateButton: {
+  buttonContainer: {
     marginHorizontal: 24,
     marginTop: 24,
     marginBottom: 40,
+  },
+  generateButton: {
     padding: 20,
     backgroundColor: '#A255FF',
     borderRadius: 16,
     alignItems: 'center',
+  },
+  generateButtonDisabled: {
+    backgroundColor: '#CCC',
   },
   generateButtonText: {
     fontSize: 18,
