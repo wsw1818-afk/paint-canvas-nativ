@@ -1,1 +1,1 @@
-✨ 네이티브 Canvas 모듈 완성: MainApplication.kt에 PaintCanvasPackage 등록
+🐛 Expo 플러그인 수정: MainApplication.kt 인식 및 패키지 자동 등록

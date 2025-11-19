@@ -39,34 +39,36 @@ const withPaintCanvas: ConfigPlugin = (config) => {
         }
       });
 
-      // MainApplication.java 수정 (패키지 추가)
+      // MainApplication.kt 수정 (패키지 추가)
+      const packageName = config.android?.package || 'com.wisangwon.ColorPlayExpo';
+      const packagePath = packageName.replace(/\./g, '/');
       const mainAppPath = path.join(
         config.modRequest.platformProjectRoot,
         'app',
         'src',
         'main',
         'java',
-        'com',
-        config.modRequest.projectName || 'colorplayexpo',
-        'MainApplication.java'
+        packagePath,
+        'MainApplication.kt'
       );
 
       if (fs.existsSync(mainAppPath)) {
         let content = fs.readFileSync(mainAppPath, 'utf-8');
 
         // Import 추가
-        if (!content.includes('import com.paintcanvas.PaintCanvasPackage;')) {
+        if (!content.includes('import com.paintcanvas.PaintCanvasPackage')) {
           content = content.replace(
-            'import java.util.List;',
-            'import java.util.List;\nimport com.paintcanvas.PaintCanvasPackage;'
+            'import expo.modules.ReactNativeHostWrapper',
+            'import expo.modules.ReactNativeHostWrapper\n\nimport com.paintcanvas.PaintCanvasPackage'
           );
         }
 
         // packages 리스트에 추가
-        if (!content.includes('new PaintCanvasPackage()')) {
+        if (!content.includes('PaintCanvasPackage()')) {
           content = content.replace(
-            /packages.add\(new ModuleRegistryAdapter/,
-            'packages.add(new PaintCanvasPackage());\n        packages.add(new ModuleRegistryAdapter'
+            /packages.apply\s*\{/,
+            `packages.apply {
+              add(PaintCanvasPackage())`
           );
         }
 
