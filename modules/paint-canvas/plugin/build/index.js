@@ -54,12 +54,18 @@ const withPaintCanvas = (config) => {
                 'PaintCanvasViewManager.kt',
                 'PaintCanvasPackage.kt'
             ];
+            // 소스 디렉토리 존재 확인
+            if (!fs.existsSync(modulePath)) {
+                throw new Error(`PaintCanvas native module directory not found: ${modulePath}`);
+            }
             files.forEach(file => {
                 const src = path.join(modulePath, 'src', 'main', 'java', 'com', 'paintcanvas', file);
                 const dest = path.join(targetPath, file);
-                if (fs.existsSync(src)) {
-                    fs.copyFileSync(src, dest);
+                if (!fs.existsSync(src)) {
+                    throw new Error(`PaintCanvas source file not found: ${src}`);
                 }
+                console.log(`[PaintCanvas Plugin] Copying ${file} to ${dest}`);
+                fs.copyFileSync(src, dest);
             });
             // MainApplication.kt 수정 (패키지 추가)
             const packageName = config.android?.package || 'com.wisangwon.ColorPlayExpo';
