@@ -1,1 +1,1 @@
-🔧 build.gradle 수정: expo-modules-core를 compileOnly로 변경하여 빈 버전 에러 해결
+🔧 build.gradle 수정: expo-modules-core에 명시적 버전 3.0.26 지정 + repositories 추가
