@@ -261,8 +261,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     private fun handlePainting(screenX: Float, screenY: Float) {
         // Convert screen coordinates to canvas coordinates
+        // Create current transform matrix
+        val currentMatrix = Matrix()
+        currentMatrix.postScale(scaleFactor, scaleFactor)
+        currentMatrix.postTranslate(translateX, translateY)
+
         val inverseMatrix = Matrix()
-        matrix.invert(inverseMatrix)
+        currentMatrix.invert(inverseMatrix)
         val points = floatArrayOf(screenX, screenY)
         inverseMatrix.mapPoints(points)
 
