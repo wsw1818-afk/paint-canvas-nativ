@@ -1,1 +1,1 @@
-🔧 build.gradle에서 expo-modules-core 의존성 제거: Autolinking이 자동 처리
+✨ New Architecture 활성화: react-native-reanimated 요구사항 충족
