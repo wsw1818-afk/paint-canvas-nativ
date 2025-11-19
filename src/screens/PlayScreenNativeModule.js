@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView } from 'paint-canvas-native';
+import { PaintCanvasView } from '../../modules/paint-canvas/src';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 

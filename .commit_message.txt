@@ -1,1 +1,1 @@
-🔧 modules/paint-canvas/package.json 원복: 중복 expo config 제거로 Autolinking 충돌 해결
+🔄 Config Plugin 방식으로 전환: Autolinking 문제 우회, native 코드 직접 복사
