@@ -1,1 +1,1 @@
-✨ New Architecture 활성화: react-native-reanimated 요구사항 충족
+🔧 build.gradle에 expo-modules-core project 참조 추가: 컴파일 타임 의존성 해결
