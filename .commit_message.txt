@@ -1,1 +1,1 @@
-🐛 app.json 문법 오류 수정: 불필요한 ] 괄호 제거
+🔧 build.gradle 수정: expo-modules-core를 compileOnly로 변경하여 빈 버전 에러 해결
