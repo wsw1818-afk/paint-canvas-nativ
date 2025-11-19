@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import HomeScreen from './src/screens/HomeScreen';
 import GenerateScreen from './src/screens/GenerateScreen';
-import PlayScreen from './src/screens/PlayScreen';
+import PlayScreenNativeModule from './src/screens/PlayScreenNativeModule';
 import GalleryScreen from './src/screens/GalleryScreen';
+// Updated - Using PlayScreenNativeModule with native Android Canvas (zero latency)
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState('Home');
@@ -27,7 +28,7 @@ export default function App() {
       case 'Generate':
         return <GenerateScreen navigation={navigation} route={{ params }} />;
       case 'Play':
-        return <PlayScreen navigation={navigation} route={{ params }} />;
+        return <PlayScreenNativeModule navigation={navigation} route={{ params }} />;
       case 'Gallery':
         return <GalleryScreen navigation={navigation} />;
       default:

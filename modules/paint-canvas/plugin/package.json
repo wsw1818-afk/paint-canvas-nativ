@@ -1,0 +1,14 @@
+{
+  "name": "paint-canvas-plugin",
+  "version": "1.0.0",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@expo/config-plugins": "^8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

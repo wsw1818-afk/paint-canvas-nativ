@@ -1,0 +1,1 @@
+✨ 네이티브 Canvas 모듈 완성: MainApplication.kt에 PaintCanvasPackage 등록
