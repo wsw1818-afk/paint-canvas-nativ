@@ -1,1 +1,1 @@
-⏮️ build.gradle를 성공 빌드 시점으로 완전 원복 (implementation으로 복원)
+🔧 build.gradle에서 expo-modules-core 의존성 제거 (Autolinking에 완전 위임)
