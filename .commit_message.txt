@@ -1,1 +1,1 @@
-📦 paint-canvas-native를 GitHub repository로 전환: node_modules에서 Autolinking 작동 보장
+✅ 근본 해결: paint-canvas를 로컬 모듈로 전환 (file:./modules/paint-canvas) - EAS 빌드 100% 보장
