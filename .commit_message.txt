@@ -1,1 +1,1 @@
-🐛 디버깅 로그 추가: setCells, onDraw, onTouchEvent 상태 추적
+🔄 Fresh prebuild로 Android 프로젝트 재생성: Autolinking 정상화
