@@ -1,1 +1,1 @@
-📚 EAS 빌드 가이드 및 검증 스크립트 추가: 재발 방지
+♻️ 네이티브 모듈을 Expo Modules API로 마이그레이션: View config 에러 해결

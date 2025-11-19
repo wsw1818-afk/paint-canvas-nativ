@@ -1,5 +1,5 @@
-import { requireNativeComponent, ViewStyle } from 'react-native';
-import type { NativeSyntheticEvent } from 'react-native';
+import { requireNativeViewManager } from 'expo-modules-core';
+import type { ViewProps } from 'react-native';
 
 export interface PaintCanvasCell {
   row: number;
@@ -13,13 +13,12 @@ export interface PaintCanvasPaintedEvent {
   correct: boolean;
 }
 
-export interface PaintCanvasProps {
-  style?: ViewStyle;
+export interface PaintCanvasProps extends ViewProps {
   gridSize: number;
   cells: PaintCanvasCell[];
   selectedColorHex: string;
   imageUri: string;
-  onCellPainted?: (event: NativeSyntheticEvent<PaintCanvasPaintedEvent>) => void;
+  onCellPainted?: (event: PaintCanvasPaintedEvent) => void;
 }
 
-export const PaintCanvasView = requireNativeComponent<PaintCanvasProps>('PaintCanvasView');
+export const PaintCanvasView = requireNativeViewManager<PaintCanvasProps>('PaintCanvas');

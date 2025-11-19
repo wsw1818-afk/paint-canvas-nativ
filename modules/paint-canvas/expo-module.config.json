@@ -1,6 +1,6 @@
 {
   "platforms": ["android"],
   "android": {
-    "modules": ["com.paintcanvas.PaintCanvasPackage"]
+    "modules": ["com.paintcanvas.PaintCanvasModule"]
   }
 }

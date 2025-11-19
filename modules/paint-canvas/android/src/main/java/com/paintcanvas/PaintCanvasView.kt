@@ -5,11 +5,9 @@ import android.graphics.*
 import android.net.Uri
 import android.view.MotionEvent
 import android.view.View
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.ReactContext
-import com.facebook.react.bridge.WritableMap
-import com.facebook.react.uimanager.events.RCTEventEmitter
-import java.io.File
+import expo.modules.kotlin.AppContext
+import expo.modules.kotlin.viewevent.EventDispatcher
+import expo.modules.kotlin.views.ExpoView
 
 data class CellData(
     val row: Int,
@@ -17,7 +15,8 @@ data class CellData(
     val targetColorHex: String
 )
 
-class PaintCanvasView(context: Context) : View(context) {
+class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
+    private val onCellPainted by EventDispatcher()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -25,31 +24,42 @@ class PaintCanvasView(context: Context) : View(context) {
         color = Color.parseColor("#E0E0E0")
     }
 
-    var gridSize: Int = 60
-        set(value) {
-            field = value
-            cellSize = width.toFloat() / gridSize
-            invalidate()
-        }
+    private var gridSize: Int = 60
+    private var cells: List<CellData> = emptyList()
+    private var selectedColorHex: String = "#FF0000"
+    private var imageUri: String? = null
 
-    var cells: List<CellData> = emptyList()
-        set(value) {
-            field = value
-            // targetColorMap 생성
-            targetColorMap.clear()
-            value.forEach { cell ->
-                targetColorMap["${cell.row}-${cell.col}"] = cell.targetColorHex
-            }
-            invalidate()
-        }
+    fun setGridSize(value: Int) {
+        gridSize = value
+        cellSize = width.toFloat() / gridSize
+        invalidate()
+    }
 
-    var selectedColorHex: String = "#FF0000"
-    var imageUri: String? = null
-        set(value) {
-            field = value
-            backgroundBitmap = value?.let { loadBitmap(it) }
-            invalidate()
+    fun setCells(cellList: List<Map<String, Any>>) {
+        cells = cellList.map { cellMap ->
+            CellData(
+                row = (cellMap["row"] as? Number)?.toInt() ?: 0,
+                col = (cellMap["col"] as? Number)?.toInt() ?: 0,
+                targetColorHex = cellMap["targetColorHex"] as? String ?: "#000000"
+            )
         }
+        // targetColorMap 생성
+        targetColorMap.clear()
+        cells.forEach { cell ->
+            targetColorMap["${cell.row}-${cell.col}"] = cell.targetColorHex
+        }
+        invalidate()
+    }
+
+    fun setSelectedColor(colorHex: String) {
+        selectedColorHex = colorHex
+    }
+
+    fun setImageUri(uri: String) {
+        imageUri = uri
+        backgroundBitmap = loadBitmap(uri)
+        invalidate()
+    }
 
     private var cellSize: Float = 0f
     private val filledCells = mutableSetOf<String>() // "row-col"
@@ -161,14 +171,11 @@ class PaintCanvasView(context: Context) : View(context) {
     }
 
     private fun sendCellPaintedEvent(row: Int, col: Int, correct: Boolean) {
-        val event: WritableMap = Arguments.createMap().apply {
-            putInt("row", row)
-            putInt("col", col)
-            putBoolean("correct", correct)
-        }
-
-        (context as? ReactContext)?.getJSModule(RCTEventEmitter::class.java)
-            ?.receiveEvent(id, "onCellPainted", event)
+        onCellPainted(mapOf(
+            "row" to row,
+            "col" to col,
+            "correct" to correct
+        ))
     }
 
     private fun loadBitmap(uriString: String): Bitmap? {
