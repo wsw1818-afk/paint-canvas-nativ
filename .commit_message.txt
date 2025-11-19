@@ -1,1 +1,1 @@
-✅ 근본 해결: paint-canvas를 로컬 모듈로 전환 (file:./modules/paint-canvas) - EAS 빌드 100% 보장
+🔧 Gradle 네트워크 타임아웃 10초→60초 증가: EAS 빌드 Gradle 다운로드 실패 해결
