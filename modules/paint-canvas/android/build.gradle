@@ -45,5 +45,4 @@ repositories {
 dependencies {
     implementation 'com.facebook.react:react-android'
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${safeExtGet('kotlinVersion', '1.9.22')}"
-    compileOnly 'expo.modules:expo-modules-core:3.0.26'
 }

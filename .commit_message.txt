@@ -1,1 +1,1 @@
-🔧 Gradle 네트워크 타임아웃 10초→60초 증가: EAS 빌드 Gradle 다운로드 실패 해결
+🔧 build.gradle에서 expo-modules-core 의존성 제거: Autolinking이 자동 처리
