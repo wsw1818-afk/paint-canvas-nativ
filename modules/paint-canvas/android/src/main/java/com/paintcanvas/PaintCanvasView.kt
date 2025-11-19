@@ -289,15 +289,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val isCorrect = cellLabel == selectedLabel
 
         if (isCorrect) {
-            // Fill cell immediately
+            // Fill cell immediately - UI update FIRST
             filledCells.add(cellKey)
-            invalidate() // Instant redraw - no delay!
+            invalidate() // Instant redraw - zero delay!
 
-            // Send event to JS
-            sendCellPaintedEvent(row, col, true)
+            // Send event to JS asynchronously (don't block UI)
+            post { sendCellPaintedEvent(row, col, true) }
         } else {
-            // Wrong label - send negative feedback
-            sendCellPaintedEvent(row, col, false)
+            // Wrong label - send negative feedback asynchronously
+            post { sendCellPaintedEvent(row, col, false) }
         }
     }
 
