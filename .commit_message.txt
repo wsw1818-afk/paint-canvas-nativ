@@ -1,1 +1,1 @@
-🔧 build.gradle 최종 수정: expo-modules-core를 compileOnly로 변경 (버전 제거)
+⏮️ build.gradle를 성공 빌드 시점으로 완전 원복 (implementation으로 복원)
