@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/config-plugins": "^8.0.11",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@shopify/react-native-skia": "^2.2.12",
     "expo": "~54.0.23",
@@ -26,7 +27,6 @@
   },
   "private": true,
   "devDependencies": {
-    "@expo/config-plugins": "^8.0.11",
     "@types/react": "~19.1.10",
     "babel-preset-expo": "^54.0.7",
     "eas-cli": "^16.27.0"

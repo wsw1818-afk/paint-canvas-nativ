@@ -1,1 +1,1 @@
-🐛 플러그인 디버깅 로깅 추가: EAS 빌드 실패 원인 추적
+🔧 @expo/config-plugins를 dependencies로 이동: EAS 빌드 시 플러그인 실행 보장
