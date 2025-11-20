@@ -216,19 +216,27 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             android.util.Log.d("PaintCanvas", "Multi-touch detected")
             scaleGestureDetector.onTouchEvent(event)
 
-            // Pan with 2 fingers when not actively pinching
-            if (touchMode == TouchMode.DRAG && event.actionMasked == MotionEvent.ACTION_MOVE) {
-                val dx = event.x - lastTouchX
-                val dy = event.y - lastTouchY
+            // Pan with 2 fingers - always enabled during MOVE
+            when (event.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Second finger down - initialize position
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    // Pan when not actively pinching (scale factor not changing)
+                    val dx = event.x - lastTouchX
+                    val dy = event.y - lastTouchY
 
-                translateX += dx
-                translateY += dy
+                    translateX += dx
+                    translateY += dy
 
-                lastTouchX = event.x
-                lastTouchY = event.y
+                    lastTouchX = event.x
+                    lastTouchY = event.y
 
-                applyBoundaries()
-                invalidate()
+                    applyBoundaries()
+                    invalidate()
+                }
             }
 
             return true
