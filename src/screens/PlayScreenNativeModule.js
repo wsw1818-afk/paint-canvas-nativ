@@ -47,7 +47,7 @@ const COLOR_PALETTE = [
 
 export default function PlayScreenNativeModule({ route, navigation }) {
   const { imageUri, colorCount = 36, gridColors } = route.params || {};
-  const gridSize = 100;
+  const gridSize = 200;
 
   const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
   const [score, setScore] = useState(100);
