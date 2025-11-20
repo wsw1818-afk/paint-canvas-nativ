@@ -67,6 +67,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     fun setSelectedLabel(label: String) {
         selectedLabel = label
+        invalidate() // Redraw to show/hide highlights
     }
 
     fun setImageUri(uri: String) {
@@ -91,6 +92,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         style = Paint.Style.FILL
+    }
+
+    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        // Semi-transparent yellow overlay for selected label cells
+        color = Color.parseColor("#80FFEB3B") // 50% opacity yellow
     }
 
     // Zoom and Pan variables
@@ -176,8 +183,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     // White cover
                     canvas.drawRect(left, top, right, bottom, coverPaint)
 
-                    // Alphabet label
+                    // Highlight cells with selected label
                     val label = labelMap[cellKey] ?: "A"
+                    if (label == selectedLabel) {
+                        canvas.drawRect(left, top, right, bottom, highlightPaint)
+                    }
+
+                    // Alphabet label
                     textPaint.textSize = cellSize * 0.5f
                     val xPos = left + cellSize / 2f
                     val yPos = top + cellSize / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
