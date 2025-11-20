@@ -199,55 +199,52 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     override fun onTouchEvent(event: MotionEvent): Boolean {
         android.util.Log.d("PaintCanvas", "onTouchEvent: action=${event.actionMasked}, pointerCount=${event.pointerCount}, touchMode=$touchMode")
 
-        // Only pass to scale detector if multi-touch
+        // Handle multi-touch (2+ fingers) for zoom and pan
         if (event.pointerCount >= 2) {
-            android.util.Log.d("PaintCanvas", "Passing to scaleGestureDetector")
+            android.util.Log.d("PaintCanvas", "Multi-touch detected")
             scaleGestureDetector.onTouchEvent(event)
-        }
 
-        // Skip single-touch handling if currently zooming
-        if (touchMode == TouchMode.ZOOM) {
-            android.util.Log.d("PaintCanvas", "In ZOOM mode, skipping single-touch")
+            // Pan with 2 fingers when not actively pinching
+            if (touchMode == TouchMode.DRAG && event.actionMasked == MotionEvent.ACTION_MOVE) {
+                val dx = event.x - lastTouchX
+                val dy = event.y - lastTouchY
+
+                translateX += dx
+                translateY += dy
+
+                lastTouchX = event.x
+                lastTouchY = event.y
+
+                applyBoundaries()
+                invalidate()
+            }
+
             return true
         }
 
+        // Single-touch handling - ONLY for painting
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                if (event.pointerCount == 1) {
-                    touchMode = TouchMode.DRAG
-                    lastTouchX = event.x
-                    lastTouchY = event.y
-                    activePointerId = event.getPointerId(0)
+                touchMode = TouchMode.DRAG
+                lastTouchX = event.x
+                lastTouchY = event.y
+                activePointerId = event.getPointerId(0)
 
-                    // Always try painting on single touch
-                    handlePainting(event.x, event.y)
-                }
+                // Paint on touch down
+                handlePainting(event.x, event.y)
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // Second finger down - switch to zoom/pan mode
-                scaleGestureDetector.onTouchEvent(event)
+                // Second finger down - prepare for pan
+                touchMode = TouchMode.DRAG
+                lastTouchX = event.x
+                lastTouchY = event.y
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (touchMode == TouchMode.DRAG && event.pointerCount == 1) {
-                    if (scaleFactor > 1.01f) {
-                        // Pan mode when zoomed
-                        val dx = event.x - lastTouchX
-                        val dy = event.y - lastTouchY
-
-                        translateX += dx
-                        translateY += dy
-
-                        lastTouchX = event.x
-                        lastTouchY = event.y
-
-                        applyBoundaries()
-                        invalidate()
-                    } else {
-                        // Painting mode when not zoomed
-                        handlePainting(event.x, event.y)
-                    }
+                // Single finger move = always paint
+                if (event.pointerCount == 1) {
+                    handlePainting(event.x, event.y)
                 }
             }
 
@@ -257,7 +254,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-                // If we had 2+ fingers and one lifted, check remaining count
+                // Finger lifted from multi-touch
                 if (event.pointerCount <= 2) {
                     touchMode = TouchMode.NONE
                 }

@@ -1,1 +1,1 @@
-🔄 Fresh prebuild로 Android 프로젝트 재생성: Autolinking 정상화
+🎯 터치 로직 개선: 단일 터치는 색칠 전용, 두 손가락으로 줌/팬
