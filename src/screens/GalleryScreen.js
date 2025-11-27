@@ -91,9 +91,10 @@ export default function GalleryScreen({ navigation }) {
   };
 
   const getDifficultyInfo = (colors) => {
-    if (colors <= 12) return { name: '쉬움', color: '#4CD964' };
-    if (colors <= 24) return { name: '보통', color: '#5AB9EA' };
-    return { name: '어려움', color: '#FF5757' };
+    if (colors <= 16) return { name: '쉬움', color: '#4CD964' };      // 16색 이하 = 쉬움
+    if (colors <= 36) return { name: '보통', color: '#5AB9EA' };     // 36색 이하 = 보통
+    if (colors <= 64) return { name: '어려움', color: '#FF5757' };  // 64색 이하 = 어려움
+    return { name: '초고화질', color: '#9B59B6' };                    // 96색 = 초고화질
   };
 
   return (
