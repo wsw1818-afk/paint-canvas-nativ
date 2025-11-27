@@ -1,9 +1,11 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PaintCanvasView } from 'paint-canvas-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { updatePuzzle } from '../utils/puzzleStorage';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // 색상 팔레트
 const COLOR_PALETTE = [
@@ -46,56 +48,459 @@ const COLOR_PALETTE = [
 ];
 
 export default function PlayScreenNativeModule({ route, navigation }) {
-  const { imageUri, colorCount = 36, gridColors } = route.params || {};
-  const gridSize = 170;
+  const { puzzleId, imageUri, colorCount = 36, gridSize: paramGridSize, gridColors, dominantColors: paramDominantColors, completionMode: paramCompletionMode } = route.params || {};
+  const gridSize = paramGridSize || 250; // 기본 250x250 격자 (높은 난이도, 많은 셀)
+  const completionMode = paramCompletionMode || 'ORIGINAL'; // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
+  const { width, height } = useWindowDimensions();
 
-  const [selectedColor, setSelectedColor] = useState(COLOR_PALETTE[0]);
-  const [score, setScore] = useState(100);
+  // 실제 이미지에서 추출한 색상 사용 (없으면 기본 팔레트 사용)
+  const actualColors = useMemo(() => {
+    if (paramDominantColors && paramDominantColors.length > 0) {
+      // 이미지에서 추출한 색상을 팔레트 형식으로 변환
+      const colors = paramDominantColors.map((color, idx) => ({
+        id: COLOR_PALETTE[idx]?.id || String.fromCharCode(65 + idx), // A, B, C, ...
+        hex: color.hex,
+        name: color.name || `색상 ${idx + 1}`
+      }));
+      console.log('[팔레트] actualColors 생성:', colors.map(c => `${c.id}=${c.hex}`).join(', '));
+      return colors;
+    }
+    return COLOR_PALETTE.slice(0, colorCount);
+  }, [paramDominantColors, colorCount]);
 
-  // 셀 데이터 생성
+  const [selectedColor, setSelectedColor] = useState(null); // 초기값 null로 변경
+  const [score, setScore] = useState(60);
+  const [filledCells, setFilledCells] = useState(new Set());
+  const [wrongCells, setWrongCells] = useState(new Set()); // 잘못 칠한 셀 추적
+  const [undoMode, setUndoMode] = useState(false); // 고치기 모드
+  const [viewDimensions, setViewDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }); // 전체 화면 크기 (dp)
+  // 🔍 디버그 로그 상태 (프로덕션에서는 비활성화)
+  const [debugLogs, setDebugLogs] = useState([]);
+  const [showDebugPanel, setShowDebugPanel] = useState(__DEV__ ? false : false); // 기본 비활성화 (성능)
+
+  // 고유 게임 ID (이미지 URI 기반)
+  const gameId = useMemo(() => {
+    if (!imageUri) return null;
+    return `game_${imageUri.split('/').pop()}_${gridSize}_${colorCount}`;
+  }, [imageUri, gridSize, colorCount]);
+
+  // 폴드7 접힘/펼침 감지
+  // 접힘: 884 x 2208 (가로)
+  // 펼침: 1768 x 2208 (가로)
+  // 가로가 1200 이상이면 태블릿 모드
+  const isTablet = width >= 1200;
+
+  // 캔버스 크기 계산 - 최대화
+  // 태블릿: 높이 우선 (헤더 제외), 너비는 툴바+팔레트 제외
+  // 모바일: 헤더 + 팔레트 제외, 최소 여백으로 최대 크기 확보
+  const HEADER_HEIGHT = 44; // 헤더 높이 (패딩 6×2 + 테두리 + 내용)
+  const PALETTE_AREA_HEIGHT = 132; // 팔레트 영역 전체 (버튼 32×3 + 간격 4×2 + 패딩 6+18 + 테두리 1)
+
+  const canvasSize = isTablet
+    ? Math.min(height - HEADER_HEIGHT - 8, width - 210) // 태블릿: 여백 더 최소화
+    : Math.min(
+        width - 8, // 좌우 여백 최소화 (12 → 8)
+        height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4 // 안전 여백 최소화 (8 → 4)
+      );
+
+
+  // selectedColor 초기화 (actualColors가 준비되면)
+  useEffect(() => {
+    if (actualColors.length > 0 && selectedColor === null) {
+      setSelectedColor(actualColors[0]);
+    }
+  }, [actualColors, selectedColor]);
+
+  // 셀 데이터 생성 (동기 - useMemo로 즉시 생성)
+  // ⚡ 최적화: colorStats useEffect 제거 - 불필요한 리렌더링 방지
+  // ⚡ 최적화: 배열 사전 할당 + 루프 최적화
   const cells = useMemo(() => {
-    const colors = COLOR_PALETTE.slice(0, colorCount);
-    const cellList = [];
-
-    for (let row = 0; row < gridSize; row++) {
-      for (let col = 0; col < gridSize; col++) {
-        let targetColorId;
-        if (gridColors && gridColors[row] && gridColors[row][col] !== undefined) {
-          targetColorId = colors[gridColors[row][col] % colorCount]?.id || colors[0].id;
-        } else {
-          targetColorId = colors[Math.floor(Math.random() * colors.length)].id;
-        }
-
-        const targetColorHex = colors.find(c => c.id === targetColorId)?.hex || '#FFFFFF';
-
-        cellList.push({
-          row,
-          col,
-          targetColorHex,
-          label: targetColorId, // Alphabet label
-        });
-      }
+    if (__DEV__) {
+      console.log('[셀생성] 시작:', { gridSize, colorCount, actualColorsCount: actualColors.length });
     }
 
-    return cellList;
-  }, [gridSize, colorCount, gridColors]);
+    const colorMap = new Map(actualColors.map(c => [c.id, c.hex]));
+    const totalCells = gridSize * gridSize;
+    const cellList = new Array(totalCells);
+    const actualColorsLength = actualColors.length;
+    const hasGridColors = gridColors && gridColors.length > 0;
 
-  // 셀 칠해짐 이벤트 핸들러
+    // ⚡ 루프 최적화: 조건문 최소화
+    for (let idx = 0; idx < totalCells; idx++) {
+      const row = (idx / gridSize) | 0; // 비트 연산으로 정수 변환 (Math.floor 대체)
+      const col = idx % gridSize;
+
+      let targetColorId;
+      if (hasGridColors && gridColors[row]?.[col] !== undefined) {
+        const colorIndex = gridColors[row][col] % actualColorsLength;
+        targetColorId = actualColors[colorIndex]?.id || 'A';
+      } else {
+        targetColorId = actualColors[idx % actualColorsLength]?.id || 'A';
+      }
+
+      cellList[idx] = {
+        row,
+        col,
+        targetColorHex: colorMap.get(targetColorId) || '#FFFFFF',
+        label: targetColorId,
+      };
+    }
+
+    if (__DEV__) {
+      console.log('[셀생성] 완료:', totalCells, '개 셀');
+    }
+    return cellList;
+  }, [gridSize, colorCount, gridColors, actualColors]);
+
+  // 저장된 진행 상황 불러오기
+  const [isCanvasReady, setIsCanvasReady] = useState(false);
+
+  useEffect(() => {
+    const loadProgress = async () => {
+      if (gameId) {
+        try {
+          const savedData = await AsyncStorage.getItem(gameId);
+          if (savedData) {
+            const { filledCells: saved, score: savedScore, wrongCells: savedWrong } = JSON.parse(savedData);
+            setFilledCells(new Set(saved));
+            setWrongCells(new Set(savedWrong || []));
+            setScore(savedScore || 60);
+          }
+        } catch (error) {
+          console.error('Failed to load progress:', error);
+        }
+      }
+      setIsCanvasReady(true);
+    };
+
+    loadProgress();
+  }, [gameId]);
+
+  // 진행 상황 저장 (더 긴 디바운스 - 성능 최적화)
+  const saveProgressRef = useRef(null);
+  const filledCellsRef = useRef(filledCells);
+  const wrongCellsRef = useRef(wrongCells);
+  const scoreRef = useRef(score);
+
+  // Ref 업데이트 (리렌더링 없이)
+  useEffect(() => {
+    filledCellsRef.current = filledCells;
+    wrongCellsRef.current = wrongCells;
+    scoreRef.current = score;
+  }, [filledCells, wrongCells, score]);
+
+  // 저장 함수 (Ref 사용으로 의존성 제거)
+  const saveProgress = useCallback(() => {
+    if (!gameId) return;
+
+    if (saveProgressRef.current) {
+      clearTimeout(saveProgressRef.current);
+    }
+
+    saveProgressRef.current = setTimeout(async () => {
+      try {
+        const data = {
+          filledCells: Array.from(filledCellsRef.current),
+          wrongCells: Array.from(wrongCellsRef.current),
+          score: scoreRef.current,
+          timestamp: Date.now()
+        };
+        await AsyncStorage.setItem(gameId, JSON.stringify(data));
+
+        // 퍼즐 완성도 업데이트 (puzzleStorage에 저장)
+        if (puzzleId) {
+          const totalCells = gridSize * gridSize;
+          const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
+          const progress = Math.max(0, Math.min(100, (correctCells / totalCells) * 100));
+
+          await updatePuzzle(puzzleId, {
+            progress: progress,
+            lastPlayed: new Date().toISOString()
+          });
+        }
+      } catch (error) {
+        console.error('Failed to save progress:', error);
+      }
+    }, 2000); // 2초 디바운스 (성능 최적화)
+  }, [gameId, puzzleId, gridSize]);
+
+  // filledCells 변경 시 자동 저장 (score는 제외 - 너무 자주 변경됨)
+  useEffect(() => {
+    if (isCanvasReady && filledCells.size > 0) {
+      saveProgress();
+    }
+  }, [filledCells.size, isCanvasReady, saveProgress]);
+
+  // 🔍 디버그 로그 핸들러 (성능 최적화: 디버그 패널 열릴 때만 활성화)
+  const handleDebugLog = useCallback((event) => {
+    // ⚡ 최적화: 디버그 패널이 닫혀있으면 로그 무시
+    if (!showDebugPanel) return;
+
+    const { message } = event.nativeEvent;
+    const timestamp = new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDebugLogs(prev => {
+      const newLogs = [...prev, `[${timestamp}] ${message}`];
+      return newLogs.slice(-30); // ⚡ 30개로 축소 (성능)
+    });
+  }, [showDebugPanel]);
+
+  // 셀 칠해짐 이벤트 핸들러 (⚡ 최적화: 불필요한 Set 재생성 방지)
   const handleCellPainted = useCallback((event) => {
     const { row, col, correct } = event.nativeEvent;
+    const cellKey = `${row}-${col}`;
+
+    // 🔧 고치기 모드(undoMode)일 때는 X 제거 이벤트만 처리
+    if (undoMode) {
+      if (correct && wrongCells.has(cellKey)) {
+        // ⚡ 배치 업데이트로 리렌더링 최소화
+        setWrongCells(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(cellKey);
+          if (newSet.size === 0) {
+            setTimeout(() => setUndoMode(false), 100);
+          }
+          return newSet;
+        });
+        setFilledCells(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(cellKey);
+          return newSet;
+        });
+      }
+      return;
+    }
 
     if (correct) {
+      // ⚡ 이미 있으면 빠른 반환
+      setFilledCells(prev => {
+        if (prev.has(cellKey)) return prev;
+        const newSet = new Set(prev);
+        newSet.add(cellKey);
+        return newSet;
+      });
+
+      setWrongCells(prev => {
+        if (!prev.has(cellKey)) return prev; // ⚡ 없으면 빠른 반환
+        const newSet = new Set(prev);
+        newSet.delete(cellKey);
+        return newSet;
+      });
+
       setScore(prev => prev + 10);
     } else {
+      setWrongCells(prev => {
+        if (prev.has(cellKey)) return prev;
+        const newSet = new Set(prev);
+        newSet.add(cellKey);
+        return newSet;
+      });
       setScore(prev => Math.max(0, prev - 5));
     }
-  }, []);
+  }, [undoMode, wrongCells]);
 
   // 색상 선택 핸들러
   const handleColorSelect = useCallback((color) => {
+    console.log('[팔레트] 색상 선택:', `${color.id}=${color.hex}`);
     setSelectedColor(color);
   }, []);
 
+  // filledCells를 배열로 변환 (캐싱 - 매 렌더마다 새 배열 생성 방지)
+  const filledCellsArray = useMemo(() => Array.from(filledCells), [filledCells]);
+
+  // ⚡ 최적화: wrongCells 배열 변환도 캐싱
+  const wrongCellsArray = useMemo(() => Array.from(wrongCells), [wrongCells]);
+
+  // Gestures and rendering are now handled entirely by Native code
+  // No JavaScript transform needed!
+
+  // 툴바 버튼 렌더링 (태블릿 전용)
+  const renderToolbar = useCallback(() => {
+    const toolButtons = (
+      <>
+        <TouchableOpacity style={[styles.toolButton, styles.toolButtonActive]}>
+          <Text style={styles.toolIcon}>🖌️</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.toolButton}>
+          <Text style={styles.toolIcon}>🔍</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.toolButton}>
+          <Text style={styles.toolIcon}>✋</Text>
+        </TouchableOpacity>
+      </>
+    );
+
+    return (
+      <ScrollView
+        style={styles.toolbarVertical}
+        contentContainerStyle={styles.toolbarVerticalContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {toolButtons}
+      </ScrollView>
+    );
+  }, []);
+
+  // 색상의 밝기 계산 (0-255)
+  const getLuminance = useCallback((hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  }, []);
+
+  // 색상 팔레트 렌더링
+  const renderPalette = useCallback(() => {
+    if (isTablet) {
+      return (
+        <ScrollView
+          style={styles.paletteContainerTablet}
+          contentContainerStyle={styles.paletteTablet}
+        >
+          {actualColors.map((color) => {
+            const luminance = getLuminance(color.hex);
+            const textColor = luminance > 128 ? '#000' : '#FFF';
+            const shadowColor = luminance > 128 ? '#FFF' : '#000';
+
+            return (
+              <TouchableOpacity
+                key={color.id}
+                style={[
+                  styles.colorButton,
+                  { backgroundColor: color.hex },
+                  selectedColor?.id === color.id && styles.colorButtonSelected
+                ]}
+                onPress={() => handleColorSelect(color)}
+              >
+                <Text style={[styles.colorId, { color: textColor, textShadowColor: shadowColor }]}>
+                  {color.id}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      );
+    }
+
+    // 모바일: 고정 높이 View
+    return (
+      <View style={styles.paletteContainer}>
+        <View style={styles.palette}>
+          {actualColors.map((color) => {
+            const luminance = getLuminance(color.hex);
+            const textColor = luminance > 128 ? '#000' : '#FFF';
+            const shadowColor = luminance > 128 ? '#FFF' : '#000';
+
+            return (
+              <TouchableOpacity
+                key={color.id}
+                style={[
+                  styles.colorButton,
+                  { backgroundColor: color.hex },
+                  selectedColor?.id === color.id && styles.colorButtonSelected
+                ]}
+                onPress={() => handleColorSelect(color)}
+              >
+                <Text style={[styles.colorId, { color: textColor, textShadowColor: shadowColor }]}>
+                  {color.id}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
+  }, [isTablet, colorCount, selectedColor?.id, handleColorSelect, actualColors, getLuminance]);
+
+  if (isTablet) {
+    // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.backButton}>← 뒤로</Text>
+          </TouchableOpacity>
+
+          <View style={styles.headerCenter}>
+            <View style={styles.scoreContainer}>
+              <Text style={styles.coinIcon}>🪙</Text>
+              <Text style={styles.score}>+{score}</Text>
+            </View>
+
+            {wrongCells.size > 0 && (
+              <TouchableOpacity
+                style={[styles.undoButton, undoMode && styles.undoButtonActive]}
+                onPress={() => setUndoMode(!undoMode)}
+              >
+                <Text style={styles.undoIcon}>↩️</Text>
+                <Text style={styles.undoCount}>{wrongCells.size}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.contentTablet}>
+          {/* Left Toolbar */}
+          {renderToolbar()}
+
+          {/* Center Canvas */}
+          <View style={styles.canvasContainerTablet}>
+            <PaintCanvasView
+              key="paint-canvas-view-tablet"
+              style={styles.canvas}
+              gridSize={gridSize}
+              cells={cells}
+              selectedColorHex={selectedColor?.hex || '#FFFFFF'}
+              selectedLabel={selectedColor?.id || 'A'}
+              imageUri={imageUri}
+              filledCells={filledCellsArray}
+              wrongCells={wrongCellsArray}
+              undoMode={undoMode}
+              viewSize={viewDimensions}
+              completionMode={completionMode}
+              onCellPainted={handleCellPainted}
+              onDebugLog={handleDebugLog}
+            />
+          </View>
+
+          {/* Right Palette */}
+          {renderPalette()}
+        </View>
+
+        {/* 🔍 디버그 로그 패널 (태블릿) */}
+        {showDebugPanel && debugLogs.length > 0 && (
+          <View style={styles.debugPanel}>
+            <View style={styles.debugHeader}>
+              <Text style={styles.debugTitle}>Touch Debug Log (최근 50개)</Text>
+              <TouchableOpacity onPress={() => setDebugLogs([])}>
+                <Text style={styles.debugClear}>지우기</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowDebugPanel(false)}>
+                <Text style={styles.debugClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.debugLogContainer}>
+              {debugLogs.map((log, index) => (
+                <Text key={index} style={styles.debugLogText}>{log}</Text>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {!showDebugPanel && (
+          <TouchableOpacity
+            style={styles.debugToggleButton}
+            onPress={() => setShowDebugPanel(true)}
+          >
+            <Text style={styles.debugToggleText}>로그 보기</Text>
+          </TouchableOpacity>
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  // 모바일 레이아웃: 세로 구조 (툴바 제거)
+  // 캔버스를 항상 렌더링하고 로딩 오버레이로 덮어서 백그라운드 초기화
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
@@ -103,41 +508,102 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backButton}>← 뒤로</Text>
         </TouchableOpacity>
-        <Text style={styles.score}>점수: {score}</Text>
+
+        <View style={styles.headerCenter}>
+          <View style={styles.scoreContainer}>
+            <Text style={styles.coinIcon}>🪙</Text>
+            <Text style={styles.score}>+{score}</Text>
+          </View>
+
+          {/* 되돌리기 버튼 - 항상 표시 */}
+          <TouchableOpacity
+            style={[
+              styles.undoButton,
+              undoMode && styles.undoButtonActive,
+              wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
+            ]}
+            onPress={() => {
+              // undoMode가 켜져 있으면 항상 끌 수 있음
+              // wrongCells가 있을 때만 켤 수 있음
+              if (undoMode) {
+                setUndoMode(false);
+              } else if (wrongCells.size > 0) {
+                setUndoMode(true);
+              }
+            }}
+            disabled={wrongCells.size === 0 && !undoMode}
+          >
+            <Text style={styles.undoIcon}>↩️</Text>
+            <Text style={styles.undoCount}>{wrongCells.size}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Native Canvas */}
+      {/* Native Canvas with Zoom (Native handles gestures AND rendering) */}
       <View style={styles.canvasContainer}>
-        <PaintCanvasView
-          style={{ width: 600, height: 600 }}
-          gridSize={gridSize}
-          cells={cells}
-          selectedColorHex={selectedColor.hex}
-          selectedLabel={selectedColor.id}
-          imageUri={imageUri}
-          onCellPainted={handleCellPainted}
-        />
+        {cells.length > 0 && (
+          <PaintCanvasView
+            key="paint-canvas-view"
+            style={styles.canvas}
+            gridSize={gridSize}
+            cells={cells}
+            selectedColorHex={selectedColor?.hex || '#FFFFFF'}
+            selectedLabel={selectedColor?.id || 'A'}
+            imageUri={imageUri}
+            filledCells={filledCellsArray}
+            wrongCells={wrongCellsArray}
+            undoMode={undoMode}
+            viewSize={viewDimensions}
+            completionMode={completionMode}
+            onCellPainted={handleCellPainted}
+            onDebugLog={handleDebugLog}
+          />
+        )}
       </View>
 
       {/* 색상 팔레트 */}
-      <View style={styles.paletteContainer}>
-        <Text style={styles.paletteTitle}>색상 선택</Text>
-        <View style={styles.palette}>
-          {COLOR_PALETTE.slice(0, colorCount).map((color) => (
-            <TouchableOpacity
-              key={color.id}
-              style={[
-                styles.colorButton,
-                { backgroundColor: color.hex },
-                selectedColor.id === color.id && styles.colorButtonSelected
-              ]}
-              onPress={() => handleColorSelect(color)}
-            >
-              <Text style={styles.colorId}>{color.id}</Text>
-            </TouchableOpacity>
-          ))}
+      {renderPalette()}
+
+      {/* 로딩 오버레이 - 캔버스 위에 표시 (캔버스는 백그라운드에서 초기화) */}
+      {!isCanvasReady && (
+        <View style={styles.loadingOverlay}>
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color="#40E0D0" />
+            <Text style={styles.loadingText}>준비 중...</Text>
+          </View>
         </View>
-      </View>
+      )}
+
+      {/* 🔍 디버그 로그 패널 */}
+      {showDebugPanel && debugLogs.length > 0 && (
+        <View style={styles.debugPanel}>
+          <View style={styles.debugHeader}>
+            <Text style={styles.debugTitle}>Touch Debug Log (최근 50개)</Text>
+            <TouchableOpacity onPress={() => setDebugLogs([])}>
+              <Text style={styles.debugClear}>지우기</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowDebugPanel(false)}>
+              <Text style={styles.debugClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.debugLogContainer}>
+            {debugLogs.map((log, index) => (
+              <Text key={index} style={styles.debugLogText}>{log}</Text>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* 디버그 패널 토글 버튼 (닫혔을 때만 표시) */}
+      {!showDebugPanel && (
+        <TouchableOpacity
+          style={styles.debugToggleButton}
+          onPress={() => setShowDebugPanel(true)}
+        >
+          <Text style={styles.debugToggleText}>로그 보기</Text>
+        </TouchableOpacity>
+      )}
+
     </SafeAreaView>
   );
 }
@@ -145,20 +611,83 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: '#1A3A4A',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#20B2AA',
+    borderBottomWidth: 0,
   },
   backButton: {
     fontSize: 16,
-    color: '#A255FF',
+    color: '#FFFFFF',
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  headerCenter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  scoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFD93D',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+    shadowColor: '#FFD93D',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  undoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FF6B6B',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 4,
+    borderWidth: 2,
+    borderColor: '#FF5252',
+    shadowColor: '#FF6B6B',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  undoButtonActive: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#45A049',
+    shadowColor: '#4CAF50',
+  },
+  undoButtonDisabled: {
+    backgroundColor: '#555555',
+    borderColor: '#444444',
+    opacity: 0.5,
+  },
+  undoIcon: {
+    fontSize: 18,
+  },
+  undoCount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  coinIcon: {
+    fontSize: 20,
   },
   score: {
     fontSize: 18,
@@ -169,44 +698,237 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 16,
+    padding: 2,
+    backgroundColor: '#1A3A4A',
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  canvas: {
+    flex: 1,
+    width: '100%',
+    // Native code will center the 403x403 canvas within this full-screen view
+  },
+  canvasAnimatedContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   paletteContainer: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  paletteTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#1C1B1F',
+    paddingHorizontal: 6,
+    paddingTop: 8,
+    paddingBottom: 18,
+    backgroundColor: '#163040',
+    borderTopWidth: 2,
+    borderTopColor: '#20B2AA',
   },
   palette: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
   },
   colorButton: {
-    width: 40,
-    height: 40,
+    width: 32,
+    height: 32,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+    position: 'relative',
   },
   colorButtonSelected: {
-    borderColor: '#000',
-    borderWidth: 3,
+    borderColor: '#FFD700',
+    borderWidth: 4,
+    shadowColor: '#FFD700',
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  // 🔍 디버그 패널 스타일
+  debugPanel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 200,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    borderTopWidth: 2,
+    borderTopColor: '#40E0D0',
+  },
+  debugHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 8,
+    backgroundColor: '#1A3A4A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#40E0D0',
+  },
+  debugTitle: {
+    color: '#40E0D0',
+    fontSize: 12,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+  debugClear: {
+    color: '#FF5757',
+    fontSize: 12,
+    marginRight: 12,
+  },
+  debugClose: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  debugLogContainer: {
+    flex: 1,
+    padding: 8,
+  },
+  debugLogText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontFamily: 'monospace',
+    marginBottom: 2,
+  },
+  debugToggleButton: {
+    position: 'absolute',
+    bottom: 140,
+    right: 8,
+    backgroundColor: '#40E0D0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
+  debugToggleText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: 'bold',
+    transform: [{ scale: 1.08 }],
+  },
+  colorButtonCompleted: {
+    opacity: 0.6,
   },
   colorId: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#FFF',
-    textShadowColor: '#000',
+    color: '#000',
+    textShadowColor: '#FFF',
     textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    textShadowRadius: 1,
+  },
+  checkmark: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: 'bold',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 1,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#1C1C1E',
+    gap: 8,
+  },
+  toolbarVertical: {
+    width: 72,
+    backgroundColor: '#163040',
+    borderRightWidth: 2,
+    borderRightColor: '#20B2AA',
+  },
+  toolbarVerticalContent: {
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    gap: 10,
+    alignItems: 'center',
+  },
+  toolButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1A3A4A',
+    borderWidth: 2.5,
+    borderColor: '#40E0D0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 4,
+  },
+  toolButtonActive: {
+    borderColor: '#FFD93D',
+    borderWidth: 4,
+    backgroundColor: '#20B2AA',
+    shadowColor: '#FFD93D',
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  toolIcon: {
+    fontSize: 28,
+  },
+  contentTablet: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  canvasContainerTablet: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1A3A4A',
+    padding: 0,
+  },
+  paletteContainerTablet: {
+    width: 130,
+    backgroundColor: '#163040',
+    paddingVertical: 12,
+    paddingHorizontal: 6,
+    borderLeftWidth: 2,
+    borderLeftColor: '#20B2AA',
+  },
+  paletteTablet: {
+    flexDirection: 'column',
+    gap: 10,
+    alignItems: 'center',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(26, 58, 74, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  loadingBox: {
+    alignItems: 'center',
+    padding: 32,
+    backgroundColor: 'rgba(32, 178, 170, 0.2)',
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#40E0D0',
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#40E0D0',
+    marginTop: 16,
   },
 });

@@ -1,0 +1,23 @@
+# Git 폴더 제외 (가장 중요!)
+.git/
+
+# Node modules
+node_modules/
+
+# Build outputs
+android/app/build/
+android/.gradle/
+dist/
+.expo/
+
+# Logs
+*.log
+logs/
+
+# Test exports
+test-export/
+
+# 백업 폴더들
+*_BACKUP/
+*_backup/
+*.bak/

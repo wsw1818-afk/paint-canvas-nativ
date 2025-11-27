@@ -28,6 +28,32 @@ class PaintCanvasModule : Module() {
         view.setImageUri(uri)
       }
 
+      Prop("filledCells") { view: PaintCanvasView, cells: List<String> ->
+        view.setFilledCells(cells)
+      }
+
+      Prop("wrongCells") { view: PaintCanvasView, cells: List<String> ->
+        view.setWrongCells(cells)
+      }
+
+      Prop("undoMode") { view: PaintCanvasView, enabled: Boolean ->
+        view.setUndoMode(enabled)
+      }
+
+      Prop("eraseMode") { view: PaintCanvasView, enabled: Boolean ->
+        view.setEraseMode(enabled)
+      }
+
+      Prop("viewSize") { view: PaintCanvasView, size: Map<String, Any> ->
+        val width = (size["width"] as? Number)?.toFloat() ?: 0f
+        val height = (size["height"] as? Number)?.toFloat() ?: 0f
+        view.setViewSize(width, height)
+      }
+
+      Prop("completionMode") { view: PaintCanvasView, mode: String ->
+        view.setCompletionMode(mode)
+      }
+
       Events("onCellPainted")
     }
   }

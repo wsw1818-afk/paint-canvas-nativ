@@ -1,0 +1,31 @@
+{
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/android/.gradle/**": true,
+    "**/android/.kotlin/**": true,
+    "**/android/build/**": true,
+    "**/android/app/build/**": true,
+    "**/.expo/**": true,
+    "**/dist/**": true
+  },
+  "search.exclude": {
+    "**/.git": true,
+    "**/node_modules": true,
+    "**/android/.gradle": true,
+    "**/android/.kotlin": true,
+    "**/android/build": true,
+    "**/android/app/build": true,
+    "**/.expo": true,
+    "**/dist": true
+  },
+  "files.exclude": {
+    "**/.git": true,
+    "**/node_modules": true,
+    "**/android/.gradle": true,
+    "**/android/.kotlin": true,
+    "**/android/build": true,
+    "**/.expo": true
+  }
+}
