@@ -700,20 +700,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             paintedColorMap[cellKey] = selectedColorHex
             wrongPaintedCells.remove(cellKey)
 
-            // Instant redraw
+            // ⚡ 초고속 재렌더링: postInvalidate 대신 즉시 invalidate
             invalidate()
 
-            // Send event to JS
-            sendCellPaintedEvent(row, col, true)
+            // ⚡ JS 이벤트는 백그라운드 스레드로 전송 (UI 스레드 차단 방지)
+            post { sendCellPaintedEvent(row, col, true) }
         } else {
             // Mark as wrong paint - show X (don't add to filledCells!)
             wrongPaintedCells.add(cellKey)
             // ⭐ 잘못 칠한 색상도 기록 (X 마크의 배경색으로 사용)
             paintedColorMap[cellKey] = selectedColorHex
+
+            // ⚡ 초고속 재렌더링
             invalidate()
 
-            // Send event directly (no post delay)
-            sendCellPaintedEvent(row, col, false)
+            // ⚡ JS 이벤트는 백그라운드 스레드로 전송
+            post { sendCellPaintedEvent(row, col, false) }
         }
     }
 
@@ -771,35 +773,26 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     /**
-     * 뜨개질(니트) 텍스처를 셀에 그리기 (캐싱 적용)
+     * 뜨개질(니트) 텍스처를 셀에 그리기 (⚡ 초고속 최적화 - 비트맵 스케일링 제거)
      */
     private fun drawWeaveTexture(canvas: Canvas, left: Float, top: Float, size: Float, baseColor: Int) {
-        val cacheKey = "$baseColor"  // 색상별로 캐싱
+        // ⚡ Step 1: 단색 배경 그리기 (가장 빠름 - GPU 가속)
+        reusableBgPaint.color = baseColor
+        canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
 
-        // 캐시에서 가져오거나 새로 생성 (recycled된 경우도 재생성)
-        var cachedBitmap = weaveTextureCache[cacheKey]
-        if (cachedBitmap == null || cachedBitmap.isRecycled) {
-            // 캐시에 없거나 recycled되면 새로 생성
-            cachedBitmap = createWeaveTextureBitmap(64, baseColor)
-            // 캐시 크기 제한 (메모리 관리)
-            if (weaveTextureCache.size > 100) {
-                weaveTextureCache.clear()
+        // ⚡ Step 2: 패턴이 있으면 매우 낮은 알파로 오버레이 (선택사항)
+        weavePatternBitmap?.let { pattern ->
+            if (!pattern.isRecycled && cellSize > 8f) {  // 셀이 너무 작으면 패턴 스킵
+                try {
+                    reusableSrcRect.set(0, 0, pattern.width, pattern.height)
+                    reusableDstRect.set(left, top, left + size, top + size)
+                    // 매우 낮은 알파로 패턴만 살짝 적용 (성능 최우선)
+                    reusablePatternPaint.alpha = 25  // 100 → 25: 더 약하게
+                    canvas.drawBitmap(pattern, reusableSrcRect, reusableDstRect, reusablePatternPaint)
+                } catch (e: Exception) {
+                    // 에러 발생 시 무시하고 단색으로 유지
+                }
             }
-            weaveTextureCache[cacheKey] = cachedBitmap
-        }
-
-        // 비트맵을 셀 크기에 맞게 스케일하여 그리기
-        // 셀 사이 틈/잔여 이미지 방지를 위해 0.5px 오버랩 적용
-        try {
-            // ⚡ 최적화: 재사용 객체 대신 로컬 변수로 직접 설정 (스레드 안전)
-            reusableSrcRect.set(0, 0, cachedBitmap.width, cachedBitmap.height)
-            // 우측/하단에만 0.5px 오버랩 (좌상단은 정확히)
-            reusableDstRect.set(left, top, left + size + 0.5f, top + size + 0.5f)
-            canvas.drawBitmap(cachedBitmap, reusableSrcRect, reusableDstRect, paint)
-        } catch (e: Exception) {
-            // 비트맵 그리기 실패 시 단색으로 폴백
-            reusableFallbackPaint.color = baseColor
-            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableFallbackPaint)
         }
     }
 
