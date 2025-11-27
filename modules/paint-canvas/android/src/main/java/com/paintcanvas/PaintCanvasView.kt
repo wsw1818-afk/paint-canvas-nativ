@@ -459,15 +459,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     val colorHex = paintedColorMap[cellKey] ?: selectedColorHex
                     val cellColor = Color.parseColor(colorHex)
 
-                    // completionMode == "ORIGINAL": 올바르게 칠한 셀은 원본 이미지 표시
-                    // completionMode == "WEAVE": 항상 위빙 텍스처 유지
-                    if (completionMode == "ORIGINAL" && !wrongPaintedCells.contains(cellKey) && backgroundBitmap != null) {
-                        // 원본 이미지 조각 표시 (100% 불투명)
-                        drawOriginalImageOverlay(canvas, left, top, cellSize, row, col, 1.0f)
-                    } else {
-                        // 위빙 텍스처 모드이거나, 잘못 칠한 셀이거나, 원본 이미지 없음 → 위빙 텍스처
-                        drawWeaveTexture(canvas, left, top, cellSize, cellColor)
-                    }
+                    // ⚡ 순수 팔레트 색상만 표시 (원본 이미지 오버레이 제거)
+                    // 위빙 텍스처로 모든 칠한 셀 표시
+                    drawWeaveTexture(canvas, left, top, cellSize, cellColor)
                 } else {
                     // 미색칠 셀 - 흰색 배경에 알파벳만 표시 (모눈종이처럼)
                     val right = left + cellSize

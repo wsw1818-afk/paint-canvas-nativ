@@ -780,43 +780,15 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 function optimizePixelsForColoring(pixelData, width, height) {
   const optimized = new Uint8Array(pixelData.length);
 
-  // ⚡ 원본 색상 최대한 보존 - 최소한의 조정만 적용
+  // ⚡ 원본 색상 100% 보존 - 어떠한 조정도 하지 않음
   for (let i = 0; i < pixelData.length; i += 4) {
-    let r = pixelData[i];
-    let g = pixelData[i + 1];
-    let b = pixelData[i + 2];
-    const a = pixelData[i + 3];
-
-    // HSL 변환으로 색상 특성 분석
-    const hsl = rgbToHsl(r, g, b);
-
-    // ★ 매우 낮은 채도(회색조)만 약간 강화
-    const isGrayish = hsl.s < 10;
-
-    if (isGrayish) {
-      // 회색조는 약간의 채도 추가 (너무 약하게)
-      const { r: newR, g: newG, b: newB } = hslToRgb(hsl.h, Math.min(20, hsl.s + 5), hsl.l);
-      r = newR;
-      g = newG;
-      b = newB;
-    } else {
-      // 나머지는 원본 그대로 유지
-      // 매우 약한 선명도 향상만 적용 (거의 느껴지지 않을 정도)
-      const midpoint = 128;
-      const contrastFactor = 1.03; // 3% 대비만 (거의 원본)
-      r = midpoint + (r - midpoint) * contrastFactor;
-      g = midpoint + (g - midpoint) * contrastFactor;
-      b = midpoint + (b - midpoint) * contrastFactor;
-    }
-
-    // 범위 제한
-    optimized[i] = Math.max(0, Math.min(255, Math.round(r)));
-    optimized[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
-    optimized[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
-    optimized[i + 3] = a;
+    optimized[i] = pixelData[i];       // R
+    optimized[i + 1] = pixelData[i + 1]; // G
+    optimized[i + 2] = pixelData[i + 2]; // B
+    optimized[i + 3] = pixelData[i + 3]; // A
   }
 
-  console.log('✨ 픽셀 최적화 완료 (원본 색상 최대한 보존, 자연스러운 색감)');
+  console.log('✨ 픽셀 최적화 완료 (원본 색상 100% 보존)');
   return optimized;
 }
 
