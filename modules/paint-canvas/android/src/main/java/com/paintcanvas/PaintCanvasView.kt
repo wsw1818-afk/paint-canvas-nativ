@@ -72,6 +72,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         labelMap.clear()
         parsedColorMap.clear()
         labelMapByIndex.clear()
+        paintedColorMapInt.clear()  // ⚡ 파싱된 색상 캐시 초기화
+        paintedColorMap.clear()
         filledCellTextureCache.clear()  // 텍스처 캐시도 초기화
 
         for (cellMap in cellList) {
@@ -269,6 +271,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val wrongCellIndices = mutableSetOf<Int>() // row * gridSize + col
     private val parsedColorMap = mutableMapOf<Int, Int>() // cellIndex -> parsed color (Int)
     private val labelMapByIndex = mutableMapOf<Int, String>() // cellIndex -> label
+    private val paintedColorMapInt = mutableMapOf<Int, Int>() // ⚡ cellIndex -> painted color (Int, 파싱 완료)
     private var backgroundBitmap: Bitmap? = null  // 텍스처 적용된 이미지 (WEAVE 모드용)
     private var originalBitmap: Bitmap? = null    // 원본 이미지 (ORIGINAL 모드용)
 
@@ -387,7 +390,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var currentZoomIndex = 0
     private var twoFingerTapStartTime = 0L
     private var touchDownTime = 0L  // Time of initial ACTION_DOWN
-    private val MULTI_TOUCH_GRACE_PERIOD = 30L  // ⚡ 30ms - 두 손가락 인식 시간 확보
+    private var touchStartX = 0f    // ⚡ 터치 시작 X 위치
+    private var touchStartY = 0f    // ⚡ 터치 시작 Y 위치
+    private var hasMoved = false    // ⚡ 드래그 시작 여부
     private var twoFingerStartX = 0f
     private var twoFingerStartY = 0f
     private var twoFingerLastX = 0f  // Track last position separately from lastTouchX
@@ -604,14 +609,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val isWrong = wrongCellIndices.contains(cellIndex)
 
                 if (isFilled || isWrong) {
-                    // 색칠된 셀: paintedColorMap에서 실제 칠한 색상 가져오기
-                    val cellKey = "$row-$col"
-                    val paintedHex = paintedColorMap[cellKey]
-                    val cellColor = if (paintedHex != null) {
-                        try { Color.parseColor(paintedHex) } catch (e: Exception) { selectedColor }
-                    } else {
-                        selectedColor
-                    }
+                    // ⚡ 색칠된 셀: paintedColorMapInt에서 파싱된 색상 가져오기 (String 생성/파싱 제거)
+                    val cellColor = paintedColorMapInt[cellIndex] ?: selectedColor
 
                     drawFilledCellWithTexture(canvas, left, top, cellSize, cellColor)
 
@@ -664,11 +663,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_DOWN -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
+                touchStartX = event.x  // ⚡ 터치 시작 위치 저장
+                touchStartY = event.y
                 activePointerId = event.getPointerId(0)
-                preventPaintOnce = false  // Reset on new touch
-                allowPainting = false  // ⚡ ACTION_DOWN에서는 색칠 안 함 (두 손가락 대기)
+                preventPaintOnce = false
+                allowPainting = false
                 touchDownTime = System.currentTimeMillis()
-                // ⚡ ACTION_DOWN에서 색칠하지 않음 - 두 손가락 터치 시 첫 손가락이 먼저 색칠되는 문제 방지
+                hasMoved = false  // ⚡ 이동 여부 리셋
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -692,13 +693,23 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_MOVE -> {
                 when (event.pointerCount) {
                     1 -> {
-                        // Single finger = painting (but block after two-finger gesture)
                         if (!preventPaintOnce) {
                             val timeSinceDown = System.currentTimeMillis() - touchDownTime
-                            // ⚡ 15ms grace period - 두 손가락 인식 시간 확보하면서 딜레이 최소화
-                            if (timeSinceDown >= 15L) {
+                            val dx = event.x - touchStartX
+                            val dy = event.y - touchStartY
+                            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                            // ⚡ 두 손가락 터치 방지: 50ms 내에는 일정 거리(15px) 이상 이동해야만 색칠
+                            // 두 손가락 터치 시 첫 손가락이 먼저 DOWN되고 두 번째 손가락이 50ms 내 도착
+                            if (timeSinceDown >= 50L || (hasMoved && distance > 5f)) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
+                                hasMoved = true
+                            } else if (distance > 15f) {
+                                // 50ms 미만이라도 15px 이상 드래그하면 확실히 한 손가락 의도
+                                allowPainting = true
+                                handlePainting(event.x, event.y)
+                                hasMoved = true
                             }
                         }
                     }
@@ -710,7 +721,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         val centroidX = (event.getX(0) + event.getX(1)) / 2f
                         val centroidY = (event.getY(0) + event.getY(1)) / 2f
 
-                        // Always apply pan (ScaleGestureDetector handles zoom separately)
                         val dx = centroidX - lastTouchX
                         val dy = centroidY - lastTouchY
                         translateX += dx
@@ -732,10 +742,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
 
             MotionEvent.ACTION_UP -> {
-                // ⚡ 빠른 탭 처리: grace period 내에 UP되면 해당 위치 색칠
                 val timeSinceDown = System.currentTimeMillis() - touchDownTime
-                if (!preventPaintOnce && timeSinceDown < 200L && !allowPainting) {
-                    // 아직 색칠 안 됐고 빠른 탭이면 여기서 색칠
+                // ⚡ 빠른 탭: 300ms 이내, 이동 없음, 두 손가락 아님 → 색칠
+                if (!preventPaintOnce && timeSinceDown < 300L && !hasMoved) {
                     handlePainting(event.x, event.y)
                 }
 
@@ -743,8 +752,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 activePointerId = -1
                 preventPaintOnce = false
                 allowPainting = false
+                hasMoved = false
 
-                // ⚡ 터치 종료 시 리셋 + 남은 이벤트 즉시 처리
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
                 lastPaintedCol = -1
@@ -762,6 +771,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_CANCEL -> {
                 touchMode = TouchMode.NONE
                 activePointerId = -1
+                hasMoved = false
             }
         }
 
@@ -877,6 +887,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 wrongPaintedCells.remove(cellKey)
                 filledCells.remove(cellKey)
                 paintedColorMap.remove(cellKey)
+                paintedColorMapInt.remove(cellIndex)  // ⚡ Int 맵도 제거
                 recentlyRemovedWrongCells.add(cellKey)
                 queuePaintEvent(row, col, true)
             }
@@ -893,6 +904,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val cellLabel = labelMapByIndex[cellIndex]
         val isCorrect = cellLabel == selectedLabel
 
+        // ⚡ 색상 한 번만 파싱하여 저장
+        val parsedSelectedColor = try { Color.parseColor(selectedColorHex) } catch (e: Exception) { Color.RED }
+
         if (isCorrect) {
             // Skip if already correctly filled
             if (filledCellIndices.contains(cellIndex)) {
@@ -902,6 +916,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             filledCellIndices.add(cellIndex)
             filledCells.add(cellKey)
             paintedColorMap[cellKey] = selectedColorHex
+            paintedColorMapInt[cellIndex] = parsedSelectedColor  // ⚡ Int 맵에도 저장
             queuePaintEvent(row, col, true)
         } else {
             // 새로운 틀린 셀 추가
@@ -910,6 +925,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             wrongPaintedCells.add(cellKey)
             filledCells.add(cellKey)
             paintedColorMap[cellKey] = selectedColorHex
+            paintedColorMapInt[cellIndex] = parsedSelectedColor  // ⚡ Int 맵에도 저장
             queuePaintEvent(row, col, false)
         }
     }
