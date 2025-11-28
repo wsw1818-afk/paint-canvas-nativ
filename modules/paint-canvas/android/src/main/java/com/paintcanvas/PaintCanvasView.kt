@@ -58,9 +58,21 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val size = cellList.size
         val newCells = ArrayList<CellData>(size)
 
+        // 🔄 새 퍼즐 로드 시 모든 상태 초기화 (JS 동기화 무시 해제)
+        filledCells.clear()
+        filledCellIndices.clear()
+        wrongPaintedCells.clear()
+        wrongCellIndices.clear()
+        recentlyRemovedWrongCells.clear()
+        lastPaintedCellIndex = -1
+        lastPaintedRow = -1
+        lastPaintedCol = -1
+
         // Map 용량 미리 할당
         targetColorMap.clear()
         labelMap.clear()
+        parsedColorMap.clear()
+        labelMapByIndex.clear()
 
         for (cellMap in cellList) {
             val row = (cellMap["row"] as? Number)?.toInt() ?: 0
@@ -73,9 +85,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val key = "$row-$col"
             targetColorMap[key] = targetColorHex
             labelMap[key] = label
+
+            // ⚡ Int 인덱스 기반 캐시 (onDraw에서 String 파싱 제거)
+            val cellIndex = row * gridSize + col
+            parsedColorMap[cellIndex] = try { Color.parseColor(targetColorHex) } catch (e: Exception) { Color.GRAY }
+            labelMapByIndex[cellIndex] = label
         }
 
         cells = newCells
+
+        // 디버그: targetColorMap 상태 확인
+        if (size > 0) {
+            android.util.Log.d("PaintCanvas", "📦 setCells: ${size}개, parsedColorMap 캐시됨")
+        }
+
         invalidate()
     }
 
@@ -149,37 +172,43 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     fun setFilledCells(cells: List<String>) {
-        // JS에서 전달받은 filledCells로 Native filledCells 동기화
-        // ⚡ 최적화: 변경이 없으면 스킵 (깜빡임 방지)
-        val newSet = cells.toSet()
-        if (filledCells == newSet) return
+        // ⚡⚡ 최적화: JS 동기화 완전 무시!
+        // Native가 터치 이벤트를 직접 처리하므로 JS에서 보내는 데이터는 항상 지연된 중복 데이터
+        // 앱 복원 시에만 필요한데, 그 경우 Native filledCells가 비어있음
+        if (filledCells.isNotEmpty()) return  // Native가 이미 상태 관리 중이면 무시
 
-        filledCells.clear()
-        filledCells.addAll(newSet)
-        invalidate()
+        // 앱 복원 시: Native filledCells가 비어있을 때만 JS 데이터로 초기화
+        for (cellKey in cells) {
+            filledCells.add(cellKey)
+            val idx = parseIndex(cellKey)
+            if (idx >= 0) filledCellIndices.add(idx)
+        }
+        if (cells.isNotEmpty()) invalidate()  // 복원 시에만 다시 그리기
+    }
+
+    // ⚡ 헬퍼: "row-col" 문자열을 인덱스로 변환
+    private fun parseIndex(cellKey: String): Int {
+        val parts = cellKey.split("-")
+        if (parts.size != 2) return -1
+        val row = parts[0].toIntOrNull() ?: return -1
+        val col = parts[1].toIntOrNull() ?: return -1
+        return row * gridSize + col
     }
 
     fun setWrongCells(cells: List<String>) {
-        // JS에서 전달받은 wrongCells로 Native wrongPaintedCells 동기화
-        // 단, 최근에 Native에서 제거한 셀은 다시 추가하지 않음 (타이밍 문제 방지)
-        val newWrongCells = mutableSetOf<String>()
-        for (cell in cells) {
-            if (!recentlyRemovedWrongCells.contains(cell)) {
-                newWrongCells.add(cell)
-            }
-        }
-
-        // ⚡ 최적화: 변경이 없으면 스킵 (깜빡임 방지)
-        if (wrongPaintedCells == newWrongCells) {
-            recentlyRemovedWrongCells.clear()
-            return
-        }
-
-        wrongPaintedCells.clear()
-        wrongPaintedCells.addAll(newWrongCells)
-        // JS와 동기화 완료되면 보호 목록 클리어
+        // ⚡⚡ 최적화: JS 동기화 완전 무시!
+        // Native가 터치 이벤트를 직접 처리하므로 JS에서 보내는 데이터는 항상 지연된 중복 데이터
         recentlyRemovedWrongCells.clear()
-        invalidate()
+
+        // 앱 복원 시: Native wrongPaintedCells가 비어있을 때만 JS 데이터로 초기화
+        if (wrongPaintedCells.isNotEmpty()) return
+
+        for (cellKey in cells) {
+            wrongPaintedCells.add(cellKey)
+            val idx = parseIndex(cellKey)
+            if (idx >= 0) wrongCellIndices.add(idx)
+        }
+        if (cells.isNotEmpty()) invalidate()  // 복원 시에만 다시 그리기
     }
 
     fun setUndoMode(enabled: Boolean) {
@@ -204,6 +233,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val targetColorMap = mutableMapOf<String, String>() // "row-col" -> hex (정답 색상)
     private val paintedColorMap = mutableMapOf<String, String>() // "row-col" -> hex (실제 칠한 색상)
     private val labelMap = mutableMapOf<String, String>() // "row-col" -> label
+
+    // ⚡ 성능 최적화: Int 인덱스 기반 데이터 구조 (String 생성/파싱 제거)
+    private val filledCellIndices = mutableSetOf<Int>() // row * gridSize + col
+    private val wrongCellIndices = mutableSetOf<Int>() // row * gridSize + col
+    private val parsedColorMap = mutableMapOf<Int, Int>() // cellIndex -> parsed color (Int)
+    private val labelMapByIndex = mutableMapOf<Int, String>() // cellIndex -> label
     private var backgroundBitmap: Bitmap? = null
 
     companion object {
@@ -319,7 +354,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var currentZoomIndex = 0
     private var twoFingerTapStartTime = 0L
     private var touchDownTime = 0L  // Time of initial ACTION_DOWN
-    private val MULTI_TOUCH_GRACE_PERIOD = 20L  // ⚡ 20ms로 단축 - 더 빠른 반응
+    private val MULTI_TOUCH_GRACE_PERIOD = 30L  // ⚡ 30ms - 두 손가락 인식 시간 확보
     private var twoFingerStartX = 0f
     private var twoFingerStartY = 0f
     private var twoFingerLastX = 0f  // Track last position separately from lastTouchX
@@ -487,35 +522,32 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         textPaint.textSize = cellSize * 0.5f
         val textYOffset = -(textPaint.descent() + textPaint.ascent()) / 2f
 
+        // ⚡ 현재 선택된 색상 미리 파싱 (루프 밖에서 한 번만)
+        val selectedColor = try { Color.parseColor(selectedColorHex) } catch (e: Exception) { Color.RED }
+
         for (row in startRow..endRow) {
-            val rowKey = row * gridSize  // 빠른 키 계산용
             val top = row * cellSize
 
             for (col in startCol..endCol) {
-                val cellKey = "$row-$col"
                 val left = col * cellSize
 
-                if (filledCells.contains(cellKey)) {
-                    // 색칠된 셀: weave_pattern2 텍스처 + 해당 셀의 정답 색상 (알파벳에 맞는 색)
-                    // ⭐ paintedColorMap이 아닌 targetColorMap 사용 - 항상 정답 색상으로 표시
-                    val colorHex = targetColorMap[cellKey] ?: "#CCCCCC"
-                    val cellColor = Color.parseColor(colorHex)
+                // ⚡ 셀 상태 확인: parsedColorMap 사용 (String 파싱 제거)
+                val cellIndex = row * gridSize + col
+                val parsedColor = parsedColorMap[cellIndex]
+                val isFilled = filledCellIndices.contains(cellIndex)
+                val isWrong = wrongCellIndices.contains(cellIndex)
 
-                    // weave_pattern2 텍스처에 정답 색상 적용
+                if (isFilled) {
+                    // 색칠된 셀: 캐시된 색상 사용
+                    val cellColor = parsedColor ?: selectedColor
                     drawFilledCellWithTexture(canvas, left, top, cellSize, cellColor)
-                } else if (wrongPaintedCells.contains(cellKey)) {
-                    // ⭐ 잘못 칠한 셀: weave_pattern2 텍스처 + 해당 셀의 정답 색상 + 경고 삼각형
-                    // targetColorMap = 이 셀에 칠해져야 할 정답 색상 (알파벳에 맞는 색)
-                    val correctColorHex = targetColorMap[cellKey] ?: "#CCCCCC"
-                    val baseColor = Color.parseColor(correctColorHex)
-
-                    // 1. weave_pattern2 텍스처에 정답 색상 적용
+                } else if (isWrong) {
+                    // 잘못 칠한 셀: 캐시된 색상 + 경고 삼각형
+                    val baseColor = parsedColor ?: selectedColor
                     drawFilledCellWithTexture(canvas, left, top, cellSize, baseColor)
-
-                    // 2. 노란색 경고 삼각형 그리기 (코드로 직접 그림 - 투명 배경)
                     drawWarningTriangle(canvas, left, top, cellSize)
                 } else {
-                    // 미색칠 셀 - 흰색 배경에 알파벳만 표시 (모눈종이처럼)
+                    // 미색칠 셀 - 흰색 배경에 알파벳만 표시
                     val right = left + cellSize
                     val bottom = top + cellSize
 
@@ -523,7 +555,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     canvas.drawRect(left, top, right, bottom, backgroundClearPaint)
 
                     // 선택된 라벨 하이라이트 (노란색 반투명)
-                    val label = labelMap[cellKey]
+                    val label = labelMapByIndex[cellIndex]
                     if (label == selectedLabel) {
                         canvas.drawRect(left, top, right, bottom, highlightPaint)
                     }
@@ -640,9 +672,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 preventPaintOnce = false
                 allowPainting = false
 
-                // ⚡ 터치 종료 시 리셋 + 남은 이벤트 즉시 전송
-                lastPaintedCellKey = null
-                flushPaintEvents()
+                // ⚡ 터치 종료 시 리셋 + 남은 이벤트 즉시 처리
+                lastPaintedCellIndex = -1
+                lastPaintedRow = -1
+                lastPaintedCol = -1
+                flushPendingEvents()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -662,110 +696,176 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         return true
     }
 
-    // ⚡ 연속 색칠 최적화: 마지막으로 칠한 셀 추적
-    private var lastPaintedCellKey: String? = null
+    // ⚡ 연속 색칠 최적화: 마지막으로 칠한 셀 추적 (Int 인덱스로 변경)
+    private var lastPaintedCellIndex: Int = -1
+    private var lastPaintedRow: Int = -1
+    private var lastPaintedCol: Int = -1
 
     // ⚡ 배치 이벤트 전송을 위한 큐
     private val pendingPaintEvents = mutableListOf<Triple<Int, Int, Boolean>>()
     private var batchEventRunnable: Runnable? = null
 
+    // ⚡ 재사용 가능한 객체들 (handlePainting에서 매번 생성하지 않음)
+    private val paintingMatrix = Matrix()
+    private val paintingInverseMatrix = Matrix()
+    private val paintingPoints = FloatArray(2)
+
     private fun handlePainting(screenX: Float, screenY: Float) {
         // Safety check - don't paint if not initialized
         if (cellSize <= 0f || canvasWidth <= 0f) return
 
-        // Convert screen coordinates to canvas coordinates
-        val currentMatrix = Matrix()
-        currentMatrix.postScale(scaleFactor, scaleFactor)
-        currentMatrix.postTranslate(translateX, translateY)
+        // ⚡ 재사용 객체로 좌표 변환 (메모리 할당 제거)
+        paintingMatrix.reset()
+        paintingMatrix.postScale(scaleFactor, scaleFactor)
+        paintingMatrix.postTranslate(translateX, translateY)
+        paintingMatrix.invert(paintingInverseMatrix)
 
-        val inverseMatrix = Matrix()
-        currentMatrix.invert(inverseMatrix)
-        val points = floatArrayOf(screenX, screenY)
-        inverseMatrix.mapPoints(points)
+        paintingPoints[0] = screenX
+        paintingPoints[1] = screenY
+        paintingInverseMatrix.mapPoints(paintingPoints)
 
-        val canvasX = points[0]
-        val canvasY = points[1]
-
-        val col = (canvasX / cellSize).toInt()
-        val row = (canvasY / cellSize).toInt()
+        val col = (paintingPoints[0] / cellSize).toInt()
+        val row = (paintingPoints[1] / cellSize).toInt()
 
         // Validate bounds
         if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) return
 
-        val cellKey = "$row-$col"
+        // ⚡ Int 인덱스로 중복 체크 (String 생성 제거)
+        val cellIndex = row * gridSize + col
 
         // ⚡ 같은 셀 연속 터치 무시 (드래그 중 같은 셀 반복 방지)
-        if (cellKey == lastPaintedCellKey) return
-        lastPaintedCellKey = cellKey
+        if (cellIndex == lastPaintedCellIndex) return
+
+        // ⚡ 빠른 드래그 시 중간 셀 보간 (Bresenham 라인 알고리즘)
+        if (lastPaintedRow >= 0 && lastPaintedCol >= 0) {
+            // 이전 셀과 현재 셀 사이의 모든 셀 채우기 (시작점 제외)
+            fillLineCells(lastPaintedRow, lastPaintedCol, row, col)
+        } else {
+            // 첫 번째 터치: 현재 셀만 칠하기
+            paintSingleCell(row, col)
+        }
+
+        // ⚡ 모든 셀 처리 후 한 번만 invalidate
+        invalidate()
+
+        lastPaintedCellIndex = cellIndex
+        lastPaintedRow = row
+        lastPaintedCol = col
+    }
+
+    // ⚡ Bresenham 라인 알고리즘으로 두 점 사이 모든 셀 채우기 (시작점 제외, 끝점 포함)
+    private fun fillLineCells(r0: Int, c0: Int, r1: Int, c1: Int) {
+        var x0 = c0
+        var y0 = r0
+        val x1 = c1
+        val y1 = r1
+
+        val dx = kotlin.math.abs(x1 - x0)
+        val dy = -kotlin.math.abs(y1 - y0)
+        val sx = if (x0 < x1) 1 else -1
+        val sy = if (y0 < y1) 1 else -1
+        var err = dx + dy
+
+        // 시작점은 이미 이전 터치에서 칠해졌으므로 스킵
+        val startX = x0
+        val startY = y0
+
+        while (true) {
+            // 시작점 제외하고 모든 점 칠하기
+            if (x0 != startX || y0 != startY) {
+                if (y0 in 0 until gridSize && x0 in 0 until gridSize) {
+                    paintSingleCell(y0, x0)
+                }
+            }
+
+            if (x0 == x1 && y0 == y1) break
+
+            val e2 = 2 * err
+            if (e2 >= dy) {
+                err += dy
+                x0 += sx
+            }
+            if (e2 <= dx) {
+                err += dx
+                y0 += sy
+            }
+        }
+    }
+
+    // ⚡ 단일 셀 칠하기 (중복 코드 제거)
+    private fun paintSingleCell(row: Int, col: Int) {
+        val cellIndex = row * gridSize + col
+        val cellKey = "$row-$col"  // JS 이벤트용
 
         // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
         if (isEraseMode) {
-            if (wrongPaintedCells.contains(cellKey)) {
+            if (wrongCellIndices.contains(cellIndex)) {
+                wrongCellIndices.remove(cellIndex)
+                filledCellIndices.remove(cellIndex)
                 wrongPaintedCells.remove(cellKey)
                 filledCells.remove(cellKey)
                 paintedColorMap.remove(cellKey)
                 recentlyRemovedWrongCells.add(cellKey)
-                invalidate()
-                // ⚡ 배치로 이벤트 전송
                 queuePaintEvent(row, col, true)
             }
             return
         }
 
         // Check if label matches selected label
-        val cellLabel = labelMap[cellKey]
+        val cellLabel = labelMapByIndex[cellIndex]
         val isCorrect = cellLabel == selectedLabel
 
         if (isCorrect) {
             // Skip if already correctly filled (and not a wrong cell being fixed)
-            if (filledCells.contains(cellKey) && !wrongPaintedCells.contains(cellKey)) {
+            if (filledCellIndices.contains(cellIndex) && !wrongCellIndices.contains(cellIndex)) {
                 return
             }
 
+            filledCellIndices.add(cellIndex)
+            wrongCellIndices.remove(cellIndex)
             filledCells.add(cellKey)
             paintedColorMap[cellKey] = selectedColorHex
             wrongPaintedCells.remove(cellKey)
-            invalidate()
-
-            // ⚡ 배치로 이벤트 전송
             queuePaintEvent(row, col, true)
         } else {
             // ⚡ 이미 틀린 셀로 표시된 경우 스킵
-            if (wrongPaintedCells.contains(cellKey)) {
+            if (wrongCellIndices.contains(cellIndex)) {
                 return
             }
 
+            wrongCellIndices.add(cellIndex)
             wrongPaintedCells.add(cellKey)
             paintedColorMap[cellKey] = selectedColorHex
-            invalidate()
-
-            // ⚡ 배치로 이벤트 전송
             queuePaintEvent(row, col, false)
         }
     }
 
-    // ⚡ 이벤트를 큐에 추가하고 배치로 전송
+    // ⚡ JS 이벤트만 큐에 추가 (invalidate는 handlePainting에서 한 번만)
     private fun queuePaintEvent(row: Int, col: Int, isCorrect: Boolean) {
         pendingPaintEvents.add(Triple(row, col, isCorrect))
 
-        // 이미 예약된 배치 전송이 있으면 스킵
+        // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (batchEventRunnable != null) return
 
-        // 16ms 후 배치 전송 (약 1프레임)
+        // ⚡ 100ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지)
         batchEventRunnable = Runnable {
-            flushPaintEvents()
-            batchEventRunnable = null
+            flushPendingEvents()
         }
-        postDelayed(batchEventRunnable, 16)
+        postDelayed(batchEventRunnable, 100)
     }
 
-    // ⚡ 큐에 쌓인 이벤트 일괄 전송
-    private fun flushPaintEvents() {
+
+    // ⚡ 남은 이벤트 즉시 처리 (터치 종료 시 또는 타이머 만료 시)
+    private fun flushPendingEvents() {
+        // 타이머 취소
+        batchEventRunnable?.let { removeCallbacks(it) }
+        batchEventRunnable = null
+
         if (pendingPaintEvents.isEmpty()) return
 
-        // 모든 이벤트 전송
-        for ((row, col, isCorrect) in pendingPaintEvents) {
-            sendCellPaintedEvent(row, col, isCorrect)
+        // JS 이벤트 배치 전송 (UI는 이미 업데이트됨)
+        for ((r, c, correct) in pendingPaintEvents) {
+            sendCellPaintedEvent(r, c, correct)
         }
         pendingPaintEvents.clear()
     }
@@ -839,60 +939,52 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
 
     /**
-     * 색칠된 셀에 weave_pattern2 텍스처 + 팔레트 색상 그리기
-     * 텍스처의 명암 정보는 유지하면서 팔레트 색상으로 틴트 적용
+     * 색칠된 셀 그리기
+     * 텍스처 패턴 + 색상 오버레이 (캐시 사용으로 성능 유지)
      */
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         val pattern = filledCellPatternBitmap
-
-        if (pattern != null && !pattern.isRecycled) {
-            // 캐시에서 색상별 텍스처 찾기
-            val cachedBitmap = getColoredTextureFromCache(pattern, color)
-
-            // 텍스처를 셀에 그리기
-            reusableSrcRect.set(0, 0, cachedBitmap.width, cachedBitmap.height)
-            reusableDstRect.set(left, top, left + size + 0.5f, top + size + 0.5f)
-            canvas.drawBitmap(cachedBitmap, reusableSrcRect, reusableDstRect, paint)
-        } else {
-            // 폴백: 텍스처 없으면 단색으로 그리기
+        if (pattern == null) {
+            // 패턴 없으면 단색 폴백
             reusableBgPaint.color = color
-            canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
+            return
         }
+
+        // ⚡ 캐시에서 색상별 텍스처 가져오기 (없으면 생성)
+        val texturedBitmap = filledCellTextureCache.getOrPut(color) {
+            createColoredTexture(pattern, color)
+        }
+
+        // 셀 크기에 맞게 스케일링하여 그리기
+        reusableTextureRect.set(left, top, left + size, top + size)
+        canvas.drawBitmap(texturedBitmap, null, reusableTextureRect, null)
     }
 
-    /**
-     * 색상별 텍스처 비트맵 캐시에서 가져오기 (없으면 생성)
-     * 텍스처의 명암(밝기)은 유지하면서 팔레트 색상을 적용
-     */
-    private fun getColoredTextureFromCache(pattern: Bitmap, color: Int): Bitmap {
-        // 캐시 확인
-        val cached = filledCellTextureCache[color]
-        if (cached != null && !cached.isRecycled) {
-            return cached
-        }
+    // 재사용 가능한 RectF (매 프레임 객체 생성 방지)
+    private val reusableTextureRect = android.graphics.RectF()
 
-        // 새로 생성: 팔레트 색상 + 텍스처 명암
+    /**
+     * 색상+텍스처 비트맵 즉시 생성 (동기적)
+     */
+    private fun createColoredTexture(pattern: Bitmap, color: Int): Bitmap {
         val s = pattern.width
         val bitmap = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
         val tempCanvas = Canvas(bitmap)
 
-        // 1. 팔레트 색상으로 배경 채우기
-        reusableBgPaint.color = color
-        tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), reusableBgPaint)
+        // 1. 텍스처 패턴을 먼저 그리기 (선명하게)
+        tempCanvas.drawBitmap(pattern, 0f, 0f, null)
 
-        // 2. 텍스처 패턴의 명암 정보 오버레이 (Multiply 블렌드)
-        // 텍스처의 어두운 부분은 어둡게, 밝은 부분은 밝게 유지
-        reusablePatternPaint.alpha = 180  // 텍스처 효과 강도 조절
-        tempCanvas.drawBitmap(pattern, 0f, 0f, reusablePatternPaint)
-
-        // 캐시에 저장 (제한: 100개)
-        if (filledCellTextureCache.size > 100) {
-            filledCellTextureCache.clear()
-        }
-        filledCellTextureCache[color] = bitmap
+        // 2. 팔레트 색상을 반투명하게 오버레이 (40% 투명도)
+        colorOverlayPaint.color = color
+        colorOverlayPaint.alpha = 100
+        tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), colorOverlayPaint)
 
         return bitmap
     }
+
+    // 색상 오버레이용 Paint (반투명)
+    private val colorOverlayPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /**
      * 색칠된 셀 그리기 (단색 폴백용)
