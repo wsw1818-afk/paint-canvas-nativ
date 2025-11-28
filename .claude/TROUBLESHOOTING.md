@@ -323,5 +323,158 @@ android.util.Log.d("PaintCanvas", "✅ Pattern loaded: ${bitmap?.width}x${bitmap
 
 ---
 
+## 11. 텍스처 렌더링 완전 해결 (Pre-baking 방식)
+
+### 증상
+- 색칠한 셀이 단색으로만 표시됨 (텍스처 패턴 안 보임)
+- 밝은 색(노란색)은 텍스처가 보이지만, 어두운 색(갈색, 보라색)은 텍스처가 안 보임
+- 팔레트 색상과 실제 칠해진 색상이 다름
+
+### 근본 원인
+**접근법 1 (실패): 실시간 블렌딩**
+- 색칠할 때마다 `createColoredTexture()` 함수로 텍스처 생성
+- MULTIPLY 블렌드 모드 사용: 어두운 색 × 텍스처 = 너무 어두워서 패턴 안 보임
+- 여러 시도했지만 근본적 한계:
+  - 밝기 조정 (50%-100%, 80%-100%) → 어두운 색에 효과 없음
+  - 적응형 블렌드 모드 (SCREEN/MULTIPLY) → 복잡하고 색상 부정확
+  - 엣지 감지 → 텍스처 디테일 손실
+
+**접근법 2 (성공): Pre-baking**
+- 퍼즐 로드 시 원본 이미지에 텍스처를 한 번만 적용
+- 색칠할 때는 텍스처가 적용된 이미지에서 해당 영역을 복사
+- 장점:
+  1. 텍스처가 모든 색상에 동일하게 보임 (밝기 무관)
+  2. 팔레트 색상과 정확히 일치
+  3. 실시간 블렌딩 불필요 → 성능 향상
+
+### 해결 방법
+
+#### 1. 원본 이미지에 텍스처 적용 (`setImageUri()`)
+
+```kotlin
+fun setImageUri(uri: String) {
+    imageUri = uri
+    val originalBitmap = loadBitmap(uri)
+
+    // ✨ 원본 이미지에 텍스처 타일링 적용 (퍼즐 생성 시 한 번만)
+    backgroundBitmap = if (originalBitmap != null && filledCellPatternBitmap != null) {
+        applyTextureToOriginalImage(originalBitmap, filledCellPatternBitmap!!)
+    } else {
+        originalBitmap
+    }
+
+    // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
+    if (backgroundBitmap != null && cells.isNotEmpty()) {
+        for (cell in cells) {
+            val cellIndex = cell.row * gridSize + cell.col
+            parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
+        }
+        android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
+    }
+
+    invalidate()
+}
+
+private fun applyTextureToOriginalImage(original: Bitmap, pattern: Bitmap): Bitmap {
+    val result = Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(result)
+
+    // 1. 원본 이미지 그리기
+    canvas.drawBitmap(original, 0f, 0f, null)
+
+    // 2. 텍스처를 타일링하여 MULTIPLY 오버레이
+    val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = BitmapShader(pattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+        alpha = 255  // 텍스처 강도 100%
+    }
+    canvas.drawRect(0f, 0f, original.width.toFloat(), original.height.toFloat(), texturePaint)
+
+    android.util.Log.d("PaintCanvas", "✨ 텍스처 적용 완료: ${original.width}x${original.height}")
+    return result
+}
+```
+
+#### 2. 색칠할 때 텍스처 영역 복사 (`drawFilledCellWithTexture()`)
+
+**잘못된 방법 (이전 코드):**
+```kotlin
+// ❌ parsedColorMap에서 단색만 추출해서 칠함 → 텍스처 안 보임
+private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
+    reusableBgPaint.color = color
+    canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
+}
+```
+
+**올바른 방법 (수정 후):**
+```kotlin
+// ✅ backgroundBitmap에서 해당 셀의 텍스처 영역을 복사
+private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
+    val bitmap = backgroundBitmap
+    if (bitmap == null) {
+        // Fallback: 단색으로 그리기
+        reusableBgPaint.color = color
+        canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
+        return
+    }
+
+    // 캔버스 좌표에서 row/col 역계산
+    val row = (top / cellSize).toInt()
+    val col = (left / cellSize).toInt()
+
+    // 원본 이미지에서 해당 셀의 영역 계산
+    val srcCellWidth = bitmap.width.toFloat() / gridSize
+    val srcCellHeight = bitmap.height.toFloat() / gridSize
+
+    val srcLeft = col * srcCellWidth
+    val srcTop = row * srcCellHeight
+    val srcRight = srcLeft + srcCellWidth
+    val srcBottom = srcTop + srcCellHeight
+
+    // 소스 영역과 대상 영역 설정
+    reusableSrcRect.set(srcLeft.toInt(), srcTop.toInt(), srcRight.toInt(), srcBottom.toInt())
+    reusableDstRect.set(left, top, left + size, top + size)
+
+    // 텍스처가 적용된 원본 이미지의 해당 영역을 그대로 복사
+    canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
+}
+```
+
+### 핵심 개념 정리
+
+**데이터 흐름:**
+1. `setImageUri()`: 원본 이미지 + 텍스처 → `backgroundBitmap` (텍스처 적용된 이미지)
+2. `setCells()`: `backgroundBitmap`에서 각 셀의 중심 픽셀 색상 추출 → `parsedColorMap`
+3. `drawFilledCellWithTexture()`: `backgroundBitmap`에서 해당 셀 영역 복사 → 캔버스에 그리기
+
+**왜 이전 방법이 실패했나?**
+- `parsedColorMap[cellIndex]`는 단일 픽셀 색상 (Int)
+- 이것을 `canvas.drawRect(color)`로 그리면 단색 사각형만 그려짐
+- 텍스처 패턴 정보는 손실됨
+
+**올바른 방법:**
+- `parsedColorMap`은 색상 확인용으로만 사용
+- 실제 그릴 때는 `backgroundBitmap`의 해당 영역을 `canvas.drawBitmap()`으로 복사
+- 텍스처 패턴이 그대로 유지됨
+
+### 빌드 체크리스트
+- [ ] Native 코드 변경 후 `expo prebuild --clean` 실행
+- [ ] `cd android && ./gradlew.bat assembleDebug` 빌드
+- [ ] 빌드 로그에서 `BUILD SUCCESSFUL` 확인
+- [ ] APK 복사: `ColorPlayExpo-texture-final.apk`
+- [ ] 디바이스 설치 후 테스트
+
+### 검증 로그
+```kotlin
+// setImageUri()에서 텍스처 적용 확인
+✨ 텍스처 적용 완료: 1024x1024
+
+// drawFilledCellWithTexture()에서 영역 복사 확인
+✨ 텍스처 영역 복사: bitmap=1024x1024, src=Rect(0, 0, 6, 6) → dst=RectF(0.0, 0.0, 5.5, 5.5)
+```
+
+---
+
 ## 마지막 업데이트
 2025-11-28: 초기 작성 - 색칠/지우기 딜레이, 깜빡임, 색상 표시 문제 해결 과정 정리
+2025-11-28: 텍스처 렌더링 완전 해결 (Pre-baking 방식) 추가

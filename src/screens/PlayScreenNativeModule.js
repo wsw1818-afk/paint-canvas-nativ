@@ -7,6 +7,62 @@ import { updatePuzzle } from '../utils/puzzleStorage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// ⚡ 최적화: 색상 버튼 컴포넌트 분리 (memo로 불필요한 리렌더링 방지)
+const ColorButton = memo(({ color, isSelected, onSelect, luminance }) => {
+  const textColor = luminance > 128 ? '#000' : '#FFF';
+  const shadowColor = luminance > 128 ? '#FFF' : '#000';
+
+  return (
+    <TouchableOpacity
+      style={[
+        colorButtonStyles.button,
+        { backgroundColor: color.hex },
+        isSelected && colorButtonStyles.selected
+      ]}
+      onPress={onSelect}
+      activeOpacity={0.7}
+    >
+      <Text style={[colorButtonStyles.id, { color: textColor, textShadowColor: shadowColor }]}>
+        {color.id}
+      </Text>
+    </TouchableOpacity>
+  );
+}, (prev, next) => {
+  // isSelected 변경 시에만 리렌더링
+  return prev.isSelected === next.isSelected && prev.color.id === next.color.id;
+});
+
+const colorButtonStyles = StyleSheet.create({
+  button: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  selected: {
+    borderColor: '#FFD700',
+    borderWidth: 4,
+    shadowColor: '#FFD700',
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  id: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 1,
+  },
+});
+
 // 색상 팔레트
 const COLOR_PALETTE = [
   { id: 'A', hex: '#FF5757', name: '빨강' },
@@ -279,16 +335,16 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         return newSet;
       });
 
-      setWrongCells(prev => {
-        if (!prev.has(cellKey)) return prev; // ⚡ 없으면 빠른 반환
-        const newSet = new Set(prev);
-        newSet.delete(cellKey);
-        return newSet;
-      });
-
       setScore(prev => prev + 10);
     } else {
+      // 잘못 칠한 셀: wrongCells와 filledCells 모두에 추가
       setWrongCells(prev => {
+        if (prev.has(cellKey)) return prev;
+        const newSet = new Set(prev);
+        newSet.add(cellKey);
+        return newSet;
+      });
+      setFilledCells(prev => {
         if (prev.has(cellKey)) return prev;
         const newSet = new Set(prev);
         newSet.add(cellKey);
@@ -296,11 +352,10 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       });
       setScore(prev => Math.max(0, prev - 5));
     }
-  }, [undoMode, wrongCells]);
+  }, [undoMode]);
 
-  // 색상 선택 핸들러
+  // 색상 선택 핸들러 (⚡ 최적화: 로그 제거)
   const handleColorSelect = useCallback((color) => {
-    console.log('[팔레트] 색상 선택:', `${color.id}=${color.hex}`);
     setSelectedColor(color);
   }, []);
 
@@ -340,15 +395,28 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     );
   }, []);
 
-  // 색상의 밝기 계산 (0-255)
-  const getLuminance = useCallback((hex) => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return 0.299 * r + 0.587 * g + 0.114 * b;
-  }, []);
+  // ⚡ 최적화: luminance 미리 계산 및 캐싱 (actualColors 변경 시에만 재계산)
+  const colorLuminanceMap = useMemo(() => {
+    const map = new Map();
+    actualColors.forEach(color => {
+      const r = parseInt(color.hex.slice(1, 3), 16);
+      const g = parseInt(color.hex.slice(3, 5), 16);
+      const b = parseInt(color.hex.slice(5, 7), 16);
+      map.set(color.id, 0.299 * r + 0.587 * g + 0.114 * b);
+    });
+    return map;
+  }, [actualColors]);
 
-  // 색상 팔레트 렌더링
+  // ⚡ 최적화: 색상 선택 핸들러 캐싱 (각 색상별로 고정된 함수 사용)
+  const colorSelectHandlers = useMemo(() => {
+    const handlers = new Map();
+    actualColors.forEach(color => {
+      handlers.set(color.id, () => setSelectedColor(color));
+    });
+    return handlers;
+  }, [actualColors]);
+
+  // 색상 팔레트 렌더링 (⚡ 최적화: memo된 ColorButton 사용)
   const renderPalette = useCallback(() => {
     if (isTablet) {
       return (
@@ -356,27 +424,15 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           style={styles.paletteContainerTablet}
           contentContainerStyle={styles.paletteTablet}
         >
-          {actualColors.map((color) => {
-            const luminance = getLuminance(color.hex);
-            const textColor = luminance > 128 ? '#000' : '#FFF';
-            const shadowColor = luminance > 128 ? '#FFF' : '#000';
-
-            return (
-              <TouchableOpacity
-                key={color.id}
-                style={[
-                  styles.colorButton,
-                  { backgroundColor: color.hex },
-                  selectedColor?.id === color.id && styles.colorButtonSelected
-                ]}
-                onPress={() => handleColorSelect(color)}
-              >
-                <Text style={[styles.colorId, { color: textColor, textShadowColor: shadowColor }]}>
-                  {color.id}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          {actualColors.map((color) => (
+            <ColorButton
+              key={color.id}
+              color={color}
+              isSelected={selectedColor?.id === color.id}
+              onSelect={colorSelectHandlers.get(color.id)}
+              luminance={colorLuminanceMap.get(color.id)}
+            />
+          ))}
         </ScrollView>
       );
     }
@@ -385,31 +441,19 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     return (
       <View style={styles.paletteContainer}>
         <View style={styles.palette}>
-          {actualColors.map((color) => {
-            const luminance = getLuminance(color.hex);
-            const textColor = luminance > 128 ? '#000' : '#FFF';
-            const shadowColor = luminance > 128 ? '#FFF' : '#000';
-
-            return (
-              <TouchableOpacity
-                key={color.id}
-                style={[
-                  styles.colorButton,
-                  { backgroundColor: color.hex },
-                  selectedColor?.id === color.id && styles.colorButtonSelected
-                ]}
-                onPress={() => handleColorSelect(color)}
-              >
-                <Text style={[styles.colorId, { color: textColor, textShadowColor: shadowColor }]}>
-                  {color.id}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+          {actualColors.map((color) => (
+            <ColorButton
+              key={color.id}
+              color={color}
+              isSelected={selectedColor?.id === color.id}
+              onSelect={colorSelectHandlers.get(color.id)}
+              luminance={colorLuminanceMap.get(color.id)}
+            />
+          ))}
         </View>
       </View>
     );
-  }, [isTablet, colorCount, selectedColor?.id, handleColorSelect, actualColors, getLuminance]);
+  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers]);
 
   if (isTablet) {
     // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
@@ -487,14 +531,6 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           </View>
         )}
 
-        {!showDebugPanel && (
-          <TouchableOpacity
-            style={styles.debugToggleButton}
-            onPress={() => setShowDebugPanel(true)}
-          >
-            <Text style={styles.debugToggleText}>로그 보기</Text>
-          </TouchableOpacity>
-        )}
       </SafeAreaView>
     );
   }
@@ -592,16 +628,6 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             ))}
           </ScrollView>
         </View>
-      )}
-
-      {/* 디버그 패널 토글 버튼 (닫혔을 때만 표시) */}
-      {!showDebugPanel && (
-        <TouchableOpacity
-          style={styles.debugToggleButton}
-          onPress={() => setShowDebugPanel(true)}
-        >
-          <Text style={styles.debugToggleText}>로그 보기</Text>
-        </TouchableOpacity>
       )}
 
     </SafeAreaView>

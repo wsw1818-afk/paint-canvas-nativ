@@ -189,5 +189,26 @@ pause
 - `expo-av` (오디오/비디오)
 - `@react-native-async-storage/async-storage` (저장소)
 
+## 코드 수정 후 사용자에게 빌드 필요 여부 안내 (필수)
+
+**Claude는 코드 수정 후 반드시 사용자에게 빌드가 필요한지 알려줘야 합니다:**
+
+### JavaScript 코드만 수정한 경우:
+```
+✅ 빌드 불필요 - Hot Reload로 자동 반영됩니다.
+앱에서 Reload만 하면 변경사항이 적용됩니다.
+```
+
+### Native 코드(Kotlin/Java) 수정한 경우:
+```
+⚠️ APK 빌드 필요 - Native 코드가 변경되었습니다.
+빌드 후 APK를 재설치해야 변경사항이 적용됩니다.
+```
+
+### 수정 완료 시 안내 예시:
+- "JS 코드만 수정했으므로 빌드 없이 Reload하면 됩니다."
+- "Native 코드(PaintCanvasView.kt)를 수정했으므로 APK 빌드가 필요합니다. 빌드할까요?"
+
 ## 마지막 업데이트
 2025-11-27: expo-linear-gradient 추가 시 CMake codegen 에러 해결법 추가
+2025-11-29: 코드 수정 후 빌드 필요 여부 안내 지침 추가
