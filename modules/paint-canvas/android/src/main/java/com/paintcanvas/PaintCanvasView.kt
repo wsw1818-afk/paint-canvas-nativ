@@ -404,8 +404,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var pinchZoomTriggered = false
     private var pinchStartSpan = 0f
     // ⚡ 핀치 줌 임계값 낮춤 (빠른 반응)
-    private val PINCH_ZOOM_IN_THRESHOLD = 50f    // 확대: 손가락 벌림 거리 (px) - 50px로 낮춤
-    private val PINCH_ZOOM_OUT_THRESHOLD = 80f   // 축소: 손가락 모음 거리 - 80px로 낮춤
+    private val PINCH_ZOOM_IN_THRESHOLD = 35f    // 확대: 손가락 벌림 거리 (px) - 35px로 낮춤
+    private val PINCH_ZOOM_OUT_THRESHOLD = 50f   // 축소: 손가락 모음 거리 - 50px로 낮춤
 
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -699,14 +699,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val dy = event.y - touchStartY
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                            // ⚡ 두 손가락 터치 방지: 50ms 내에는 일정 거리(15px) 이상 이동해야만 색칠
-                            // 두 손가락 터치 시 첫 손가락이 먼저 DOWN되고 두 번째 손가락이 50ms 내 도착
-                            if (timeSinceDown >= 50L || (hasMoved && distance > 5f)) {
-                                allowPainting = true
-                                handlePainting(event.x, event.y)
-                                hasMoved = true
-                            } else if (distance > 15f) {
-                                // 50ms 미만이라도 15px 이상 드래그하면 확실히 한 손가락 의도
+                            // ⚡ 딜레이 최소화: 30ms 또는 8px 이동 시 즉시 색칠
+                            // 두 손가락 터치는 보통 50ms 내 두 번째 손가락 도착
+                            if (hasMoved || timeSinceDown >= 30L || distance > 8f) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
                                 hasMoved = true
@@ -937,11 +932,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (batchEventRunnable != null) return
 
-        // ⚡ 100ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지)
+        // ⚡ 50ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지, 반응 속도 향상)
         batchEventRunnable = Runnable {
             flushPendingEvents()
         }
-        postDelayed(batchEventRunnable, 100)
+        postDelayed(batchEventRunnable, 50)
     }
 
 
@@ -1106,8 +1101,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         colorOverlayPaint.alpha = 255
         tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), colorOverlayPaint)
 
-        // 2. 텍스처 패턴을 반투명하게 오버레이 (15% 투명도 - 색상 더 진하게)
-        textureOverlayPaint.alpha = 40
+        // 2. 텍스처 패턴을 반투명하게 오버레이 (10% 투명도 - 색상 더 진하게)
+        textureOverlayPaint.alpha = 25
         tempCanvas.drawBitmap(pattern, 0f, 0f, textureOverlayPaint)
 
         return bitmap
