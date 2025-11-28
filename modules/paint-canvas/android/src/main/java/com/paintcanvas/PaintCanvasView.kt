@@ -120,13 +120,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 android.util.Log.e("PaintCanvas", "❌ weave_pattern not found in drawable")
             }
 
-            // 잘못 칠한 셀 표시 이미지 로드
-            val wrongResId = context.resources.getIdentifier("wrong_mark", "drawable", context.packageName)
+            // 색칠된 셀용 직조 패턴 로드 (weave_pattern2.png - 갈색 직조 텍스처)
+            val filledPatternResId = context.resources.getIdentifier("weave_pattern2", "drawable", context.packageName)
+            if (filledPatternResId != 0) {
+                filledCellPatternBitmap = android.graphics.BitmapFactory.decodeResource(context.resources, filledPatternResId)
+                android.util.Log.d("PaintCanvas", "✅ Filled cell pattern (weave_pattern2) loaded: ${filledCellPatternBitmap?.width}x${filledCellPatternBitmap?.height}")
+            } else {
+                android.util.Log.e("PaintCanvas", "❌ weave_pattern2 not found in drawable")
+            }
+
+            // 잘못 칠한 셀 경고 이미지 로드 (warning_mark.png = 경고 삼각형)
+            val wrongResId = context.resources.getIdentifier("warning_mark", "drawable", context.packageName)
             if (wrongResId != 0) {
                 wrongMarkBitmap = android.graphics.BitmapFactory.decodeResource(context.resources, wrongResId)
-                android.util.Log.d("PaintCanvas", "✅ Wrong mark loaded: ${wrongMarkBitmap?.width}x${wrongMarkBitmap?.height}")
+                android.util.Log.d("PaintCanvas", "✅ Warning mark loaded: ${wrongMarkBitmap?.width}x${wrongMarkBitmap?.height}")
             } else {
-                android.util.Log.e("PaintCanvas", "❌ wrong_mark not found in drawable")
+                android.util.Log.e("PaintCanvas", "❌ warning_mark not found in drawable")
             }
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ Failed to load drawable resources: ${e.message}")
@@ -141,20 +150,33 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     fun setFilledCells(cells: List<String>) {
         // JS에서 전달받은 filledCells로 Native filledCells 동기화
+        // ⚡ 최적화: 변경이 없으면 스킵 (깜빡임 방지)
+        val newSet = cells.toSet()
+        if (filledCells == newSet) return
+
         filledCells.clear()
-        filledCells.addAll(cells)
+        filledCells.addAll(newSet)
         invalidate()
     }
 
     fun setWrongCells(cells: List<String>) {
         // JS에서 전달받은 wrongCells로 Native wrongPaintedCells 동기화
         // 단, 최근에 Native에서 제거한 셀은 다시 추가하지 않음 (타이밍 문제 방지)
-        wrongPaintedCells.clear()
+        val newWrongCells = mutableSetOf<String>()
         for (cell in cells) {
             if (!recentlyRemovedWrongCells.contains(cell)) {
-                wrongPaintedCells.add(cell)
+                newWrongCells.add(cell)
             }
         }
+
+        // ⚡ 최적화: 변경이 없으면 스킵 (깜빡임 방지)
+        if (wrongPaintedCells == newWrongCells) {
+            recentlyRemovedWrongCells.clear()
+            return
+        }
+
+        wrongPaintedCells.clear()
+        wrongPaintedCells.addAll(newWrongCells)
         // JS와 동기화 완료되면 보호 목록 클리어
         recentlyRemovedWrongCells.clear()
         invalidate()
@@ -217,6 +239,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         strokeCap = Paint.Cap.ROUND
     }
 
+    // 노란색 경고 삼각형용 Paint
+    private val warningTriangleFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#FFEB3B")  // 노란색
+    }
+    private val warningTriangleStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        color = Color.parseColor("#F57F17")  // 진한 노란색/주황색 테두리
+    }
+    private val warningExclamationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = Color.parseColor("#5D4037")  // 갈색 느낌표
+    }
+    private val reusableTrianglePath = Path()
+
     // 위빙(뜨개질) 텍스처용 Paint
     private val weavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
@@ -237,6 +275,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // 원본 패턴 이미지 (drawable에서 로드)
     private var weavePatternBitmap: Bitmap? = null
+    // 색칠된 셀용 직조 패턴 (weave_pattern2.png - 갈색 직조 텍스처)
+    private var filledCellPatternBitmap: Bitmap? = null
     // 잘못 칠한 셀 표시 이미지
     private var wrongMarkBitmap: Bitmap? = null
 
@@ -245,7 +285,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val reusableScreenCorners = FloatArray(4)
     private val reusableSrcRect = Rect()
     private val reusableDstRect = RectF()
-    private val reusableOverlayPaint = Paint()
+    private val reusableOverlayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        isFilterBitmap = true  // Bitmap 스케일링 품질 향상
+    }
     private val reusableFallbackPaint = Paint()
     private val reusableBgPaint = Paint().apply {
         style = Paint.Style.FILL
@@ -277,7 +319,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var currentZoomIndex = 0
     private var twoFingerTapStartTime = 0L
     private var touchDownTime = 0L  // Time of initial ACTION_DOWN
-    private val MULTI_TOUCH_GRACE_PERIOD = 50L  // Wait 50ms for second finger before allowing paint (shorter for better responsiveness)
+    private val MULTI_TOUCH_GRACE_PERIOD = 20L  // ⚡ 20ms로 단축 - 더 빠른 반응
     private var twoFingerStartX = 0f
     private var twoFingerStartY = 0f
     private var twoFingerLastX = 0f  // Track last position separately from lastTouchX
@@ -454,14 +496,24 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val left = col * cellSize
 
                 if (filledCells.contains(cellKey)) {
-                    // 색칠된 셀: 실제로 칠한 색상 사용 (paintedColorMap에 저장된 색상)
-                    // targetColorMap은 정답 확인용으로만 사용
-                    val colorHex = paintedColorMap[cellKey] ?: selectedColorHex
+                    // 색칠된 셀: weave_pattern2 텍스처 + 해당 셀의 정답 색상 (알파벳에 맞는 색)
+                    // ⭐ paintedColorMap이 아닌 targetColorMap 사용 - 항상 정답 색상으로 표시
+                    val colorHex = targetColorMap[cellKey] ?: "#CCCCCC"
                     val cellColor = Color.parseColor(colorHex)
 
-                    // ⚡ 순수 팔레트 색상만 표시 (원본 이미지 오버레이 제거)
-                    // 위빙 텍스처로 모든 칠한 셀 표시
-                    drawWeaveTexture(canvas, left, top, cellSize, cellColor)
+                    // weave_pattern2 텍스처에 정답 색상 적용
+                    drawFilledCellWithTexture(canvas, left, top, cellSize, cellColor)
+                } else if (wrongPaintedCells.contains(cellKey)) {
+                    // ⭐ 잘못 칠한 셀: weave_pattern2 텍스처 + 해당 셀의 정답 색상 + 경고 삼각형
+                    // targetColorMap = 이 셀에 칠해져야 할 정답 색상 (알파벳에 맞는 색)
+                    val correctColorHex = targetColorMap[cellKey] ?: "#CCCCCC"
+                    val baseColor = Color.parseColor(correctColorHex)
+
+                    // 1. weave_pattern2 텍스처에 정답 색상 적용
+                    drawFilledCellWithTexture(canvas, left, top, cellSize, baseColor)
+
+                    // 2. 노란색 경고 삼각형 그리기 (코드로 직접 그림 - 투명 배경)
+                    drawWarningTriangle(canvas, left, top, cellSize)
                 } else {
                     // 미색칠 셀 - 흰색 배경에 알파벳만 표시 (모눈종이처럼)
                     val right = left + cellSize
@@ -489,50 +541,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         //     canvas.drawLine(0f, pos, canvasWidth, pos, gridPaint)
         // }
 
-        // 4. Draw warning marks on wrong painted cells (보이는 영역만)
-        for (cellKey in wrongPaintedCells) {
-            val parts = cellKey.split("-")
-            if (parts.size == 2) {
-                val row = parts[0].toIntOrNull() ?: continue
-                val col = parts[1].toIntOrNull() ?: continue
-
-                // ⚡ 보이는 영역 밖이면 스킵
-                if (row < startRow || row > endRow || col < startCol || col > endCol) continue
-
-                val left = col * cellSize
-                val top = row * cellSize
-
-                // 잘못 칠한 셀의 실제 칠한 색상 가져오기 (사용자가 칠한 색상)
-                val colorHex = paintedColorMap[cellKey] ?: selectedColorHex
-                val baseColor = Color.parseColor(colorHex)
-
-                // 경고 이미지를 색상과 함께 표시
-                val wrongBitmap = wrongMarkBitmap
-                if (wrongBitmap != null) {
-                    // 캐시된 경고 이미지 가져오기 또는 생성
-                    val warningBitmap = getWrongMarkWithColor(wrongBitmap, baseColor)
-                    // ⚡ 최적화: 재사용 Rect/RectF 객체 사용
-                    reusableSrcRect.set(0, 0, warningBitmap.width, warningBitmap.height)
-                    // 0.5px 오버랩 적용 (틈 방지)
-                    reusableDstRect.set(left, top, left + cellSize + 0.5f, top + cellSize + 0.5f)
-                    canvas.drawBitmap(warningBitmap, reusableSrcRect, reusableDstRect, paint)
-                } else {
-                    // 폴백: 이미지 없으면 X 표시
-                    val right = left + cellSize
-                    val bottom = top + cellSize
-                    val padding = cellSize * 0.15f
-                    wrongMarkPaint.strokeWidth = max(2f, cellSize * 0.3f)
-                    canvas.drawLine(left + padding, top + padding, right - padding, bottom - padding, wrongMarkPaint)
-                    canvas.drawLine(right - padding, top + padding, left + padding, bottom - padding, wrongMarkPaint)
-                }
-            }
-        }
+        // ⭐ Wrong cells는 이제 메인 루프에서 처리됨 (별도 루프 제거)
+        // 이렇게 해야 흰색 배경이 먼저 그려지지 않음
 
         canvas.restore()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // 로그 제거 - 성능 최적화
+        // ⚡ 성능 최적화: 터치 로그 제거 (매 프레임마다 출력되면 딜레이 발생)
 
         // Only let ScaleGestureDetector process events when there are 2+ fingers
         // This prevents accidental zoom during single-finger painting
@@ -623,6 +639,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 activePointerId = -1
                 preventPaintOnce = false
                 allowPainting = false
+
+                // ⚡ 터치 종료 시 리셋 + 남은 이벤트 즉시 전송
+                lastPaintedCellKey = null
+                flushPaintEvents()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -641,6 +661,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         return true
     }
+
+    // ⚡ 연속 색칠 최적화: 마지막으로 칠한 셀 추적
+    private var lastPaintedCellKey: String? = null
+
+    // ⚡ 배치 이벤트 전송을 위한 큐
+    private val pendingPaintEvents = mutableListOf<Triple<Int, Int, Boolean>>()
+    private var batchEventRunnable: Runnable? = null
 
     private fun handlePainting(screenX: Float, screenY: Float) {
         // Safety check - don't paint if not initialized
@@ -667,20 +694,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         val cellKey = "$row-$col"
 
+        // ⚡ 같은 셀 연속 터치 무시 (드래그 중 같은 셀 반복 방지)
+        if (cellKey == lastPaintedCellKey) return
+        lastPaintedCellKey = cellKey
+
         // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
         if (isEraseMode) {
             if (wrongPaintedCells.contains(cellKey)) {
                 wrongPaintedCells.remove(cellKey)
-                // filledCells에서도 제거 (빈 셀로 복원)
                 filledCells.remove(cellKey)
-                // ⭐ paintedColorMap에서도 제거 (칠한 색상 기록 삭제)
                 paintedColorMap.remove(cellKey)
-                // JS 동기화 전까지 이 셀이 다시 추가되지 않도록 보호
                 recentlyRemovedWrongCells.add(cellKey)
                 invalidate()
-                // correct=true로 보내서 JS에서 wrongCells에서 제거하도록
-                sendCellPaintedEvent(row, col, true)
-                android.util.Log.d("PaintCanvas", "🔧 [EraseMode] X removed, cell restored: $cellKey")
+                // ⚡ 배치로 이벤트 전송
+                queuePaintEvent(row, col, true)
             }
             return
         }
@@ -695,28 +722,52 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 return
             }
 
-            // Fill cell immediately - UI update FIRST
             filledCells.add(cellKey)
             paintedColorMap[cellKey] = selectedColorHex
             wrongPaintedCells.remove(cellKey)
-
-            // ⚡ 초고속 재렌더링: postInvalidate 대신 즉시 invalidate
             invalidate()
 
-            // ⚡ JS 이벤트는 백그라운드 스레드로 전송 (UI 스레드 차단 방지)
-            post { sendCellPaintedEvent(row, col, true) }
+            // ⚡ 배치로 이벤트 전송
+            queuePaintEvent(row, col, true)
         } else {
-            // Mark as wrong paint - show X (don't add to filledCells!)
-            wrongPaintedCells.add(cellKey)
-            // ⭐ 잘못 칠한 색상도 기록 (X 마크의 배경색으로 사용)
-            paintedColorMap[cellKey] = selectedColorHex
+            // ⚡ 이미 틀린 셀로 표시된 경우 스킵
+            if (wrongPaintedCells.contains(cellKey)) {
+                return
+            }
 
-            // ⚡ 초고속 재렌더링
+            wrongPaintedCells.add(cellKey)
+            paintedColorMap[cellKey] = selectedColorHex
             invalidate()
 
-            // ⚡ JS 이벤트는 백그라운드 스레드로 전송
-            post { sendCellPaintedEvent(row, col, false) }
+            // ⚡ 배치로 이벤트 전송
+            queuePaintEvent(row, col, false)
         }
+    }
+
+    // ⚡ 이벤트를 큐에 추가하고 배치로 전송
+    private fun queuePaintEvent(row: Int, col: Int, isCorrect: Boolean) {
+        pendingPaintEvents.add(Triple(row, col, isCorrect))
+
+        // 이미 예약된 배치 전송이 있으면 스킵
+        if (batchEventRunnable != null) return
+
+        // 16ms 후 배치 전송 (약 1프레임)
+        batchEventRunnable = Runnable {
+            flushPaintEvents()
+            batchEventRunnable = null
+        }
+        postDelayed(batchEventRunnable, 16)
+    }
+
+    // ⚡ 큐에 쌓인 이벤트 일괄 전송
+    private fun flushPaintEvents() {
+        if (pendingPaintEvents.isEmpty()) return
+
+        // 모든 이벤트 전송
+        for ((row, col, isCorrect) in pendingPaintEvents) {
+            sendCellPaintedEvent(row, col, isCorrect)
+        }
+        pendingPaintEvents.clear()
     }
 
     private fun applyBoundaries() {
@@ -773,27 +824,128 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     /**
-     * 뜨개질(니트) 텍스처를 셀에 그리기 (⚡ 초고속 최적화 - 비트맵 스케일링 제거)
+     * 색상 틴트 오버레이 그리기
+     * 원본 이미지 위에 팔레트 색상을 반투명하게 덮어서 색상 힌트 제공
+     * @param alpha 투명도 (0.0 ~ 1.0, 낮을수록 원본 이미지가 더 잘 보임)
+     */
+    private fun drawColorTint(canvas: Canvas, left: Float, top: Float, size: Float, color: Int, alpha: Float) {
+        reusableBgPaint.color = color
+        reusableBgPaint.alpha = (alpha * 255).toInt()
+        canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+        reusableBgPaint.alpha = 255  // 복원
+    }
+
+    // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
+    private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
+
+    /**
+     * 색칠된 셀에 weave_pattern2 텍스처 + 팔레트 색상 그리기
+     * 텍스처의 명암 정보는 유지하면서 팔레트 색상으로 틴트 적용
+     */
+    private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
+        val pattern = filledCellPatternBitmap
+
+        if (pattern != null && !pattern.isRecycled) {
+            // 캐시에서 색상별 텍스처 찾기
+            val cachedBitmap = getColoredTextureFromCache(pattern, color)
+
+            // 텍스처를 셀에 그리기
+            reusableSrcRect.set(0, 0, cachedBitmap.width, cachedBitmap.height)
+            reusableDstRect.set(left, top, left + size + 0.5f, top + size + 0.5f)
+            canvas.drawBitmap(cachedBitmap, reusableSrcRect, reusableDstRect, paint)
+        } else {
+            // 폴백: 텍스처 없으면 단색으로 그리기
+            reusableBgPaint.color = color
+            canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+        }
+    }
+
+    /**
+     * 색상별 텍스처 비트맵 캐시에서 가져오기 (없으면 생성)
+     * 텍스처의 명암(밝기)은 유지하면서 팔레트 색상을 적용
+     */
+    private fun getColoredTextureFromCache(pattern: Bitmap, color: Int): Bitmap {
+        // 캐시 확인
+        val cached = filledCellTextureCache[color]
+        if (cached != null && !cached.isRecycled) {
+            return cached
+        }
+
+        // 새로 생성: 팔레트 색상 + 텍스처 명암
+        val s = pattern.width
+        val bitmap = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+        val tempCanvas = Canvas(bitmap)
+
+        // 1. 팔레트 색상으로 배경 채우기
+        reusableBgPaint.color = color
+        tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), reusableBgPaint)
+
+        // 2. 텍스처 패턴의 명암 정보 오버레이 (Multiply 블렌드)
+        // 텍스처의 어두운 부분은 어둡게, 밝은 부분은 밝게 유지
+        reusablePatternPaint.alpha = 180  // 텍스처 효과 강도 조절
+        tempCanvas.drawBitmap(pattern, 0f, 0f, reusablePatternPaint)
+
+        // 캐시에 저장 (제한: 100개)
+        if (filledCellTextureCache.size > 100) {
+            filledCellTextureCache.clear()
+        }
+        filledCellTextureCache[color] = bitmap
+
+        return bitmap
+    }
+
+    /**
+     * 색칠된 셀 그리기 (단색 폴백용)
      */
     private fun drawWeaveTexture(canvas: Canvas, left: Float, top: Float, size: Float, baseColor: Int) {
-        // ⚡ Step 1: 단색 배경 그리기 (가장 빠름 - GPU 가속)
         reusableBgPaint.color = baseColor
         canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+    }
 
-        // ⚡ Step 2: 패턴이 있으면 매우 낮은 알파로 오버레이 (선택사항)
-        weavePatternBitmap?.let { pattern ->
-            if (!pattern.isRecycled && cellSize > 8f) {  // 셀이 너무 작으면 패턴 스킵
-                try {
-                    reusableSrcRect.set(0, 0, pattern.width, pattern.height)
-                    reusableDstRect.set(left, top, left + size, top + size)
-                    // 매우 낮은 알파로 패턴만 살짝 적용 (성능 최우선)
-                    reusablePatternPaint.alpha = 25  // 100 → 25: 더 약하게
-                    canvas.drawBitmap(pattern, reusableSrcRect, reusableDstRect, reusablePatternPaint)
-                } catch (e: Exception) {
-                    // 에러 발생 시 무시하고 단색으로 유지
-                }
-            }
-        }
+    /**
+     * 노란색 경고 삼각형 그리기 (투명 배경)
+     * 잘못 칠한 셀 위에 오버레이로 표시
+     */
+    private fun drawWarningTriangle(canvas: Canvas, left: Float, top: Float, size: Float) {
+        val padding = size * 0.15f
+        val centerX = left + size / 2f
+        val triangleTop = top + padding
+        val triangleBottom = top + size - padding
+        val triangleLeft = left + padding
+        val triangleRight = left + size - padding
+
+        // 삼각형 경로 설정
+        reusableTrianglePath.reset()
+        reusableTrianglePath.moveTo(centerX, triangleTop)  // 상단 꼭지점
+        reusableTrianglePath.lineTo(triangleRight, triangleBottom)  // 우측 하단
+        reusableTrianglePath.lineTo(triangleLeft, triangleBottom)  // 좌측 하단
+        reusableTrianglePath.close()
+
+        // 노란색 삼각형 채우기
+        canvas.drawPath(reusableTrianglePath, warningTriangleFillPaint)
+
+        // 테두리 그리기
+        warningTriangleStrokePaint.strokeWidth = max(1f, size * 0.05f)
+        canvas.drawPath(reusableTrianglePath, warningTriangleStrokePaint)
+
+        // 느낌표 그리기
+        val exclamationWidth = size * 0.08f
+        val exclamationTop = triangleTop + size * 0.25f
+        val exclamationBottom = triangleBottom - size * 0.2f
+        val exclamationMid = exclamationBottom - size * 0.15f
+
+        // 느낌표 세로 막대
+        canvas.drawRect(
+            centerX - exclamationWidth / 2f,
+            exclamationTop,
+            centerX + exclamationWidth / 2f,
+            exclamationMid,
+            warningExclamationPaint
+        )
+
+        // 느낌표 점
+        val dotRadius = exclamationWidth * 0.6f
+        canvas.drawCircle(centerX, exclamationBottom - dotRadius, dotRadius, warningExclamationPaint)
     }
 
     /**
@@ -831,6 +983,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     /**
      * 잘못 칠한 셀 경고 이미지 생성 (배경색 + 경고 아이콘)
+     * ⭐ 배경은 정답 색상, 그 위에 경고 삼각형 오버레이
      */
     private fun getWrongMarkWithColor(wrongBitmap: Bitmap, baseColor: Int): Bitmap {
         // 캐시 확인 (recycled된 경우도 재생성)
@@ -845,18 +998,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val canvas = Canvas(bitmap)
 
         // ⚡ 최적화: 재사용 Paint 객체 사용
-        // 1. 베이스 색상으로 배경 채우기 (위빙 텍스처와 동일)
+        // 1. 정답 색상으로 배경 채우기 (순수 단색, 패턴 없음)
         reusableBgPaint.color = baseColor
         canvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), reusableBgPaint)
 
-        // 2. 위빙 패턴 적용 (있으면, recycled 아닌 경우만)
-        weavePatternBitmap?.let { pattern ->
-            if (!pattern.isRecycled) {
-                canvas.drawBitmap(pattern, 0f, 0f, reusablePatternPaint)
-            }
-        }
-
-        // 3. 경고 이미지 오버레이 (원본 그대로)
+        // 2. 경고 이미지 오버레이 (경고 삼각형 - weave_pattern3.png)
         if (!wrongBitmap.isRecycled) {
             canvas.drawBitmap(wrongBitmap, 0f, 0f, null)
         }
@@ -875,10 +1021,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * @param alpha 투명도 (0.0 ~ 1.0, 낮을수록 미세함)
      */
     private fun drawOriginalImageOverlay(canvas: Canvas, left: Float, top: Float, size: Float, row: Int, col: Int, alpha: Float) {
-        val bitmap = backgroundBitmap ?: return
+        val bitmap = backgroundBitmap ?: run {
+            if (row == 7 && col == 4) {
+                android.util.Log.d("PaintCanvas", "⚠️ drawOriginalImageOverlay: bitmap is NULL!")
+            }
+            return
+        }
 
         // 안전 체크: Bitmap이 recycled되었거나 유효하지 않은 경우
         if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+            if (row == 7 && col == 4) {
+                android.util.Log.d("PaintCanvas", "⚠️ drawOriginalImageOverlay: bitmap invalid (recycled=${bitmap.isRecycled}, size=${bitmap.width}x${bitmap.height})")
+            }
             return
         }
 
@@ -892,6 +1046,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val srcRight = min(bitmap.width, ((col + 1) * srcCellWidth).toInt())
             val srcBottom = min(bitmap.height, ((row + 1) * srcCellHeight).toInt())
 
+            if (row == 7 && col == 4) {
+                android.util.Log.d("PaintCanvas", "✅ drawOriginalImageOverlay: src=[${srcLeft},${srcTop},${srcRight},${srcBottom}], dst=[${left},${top},${left+size},${top+size}], alpha=${alpha}")
+            }
+
             // ⚡ 최적화: 재사용 Paint 객체 사용
             reusableOverlayPaint.alpha = (alpha * 255).toInt()
 
@@ -899,9 +1057,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
             reusableDstRect.set(left, top, left + size, top + size)
 
+            if (row == 7 && col == 4) {
+                android.util.Log.d("PaintCanvas", "🎨 drawBitmap called: paint.alpha=${reusableOverlayPaint.alpha}")
+            }
+
             canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableOverlayPaint)
+
+            if (row == 7 && col == 4) {
+                android.util.Log.d("PaintCanvas", "✅ drawBitmap completed for original image overlay")
+            }
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ drawOriginalImageOverlay failed: ${e.message}")
+            e.printStackTrace()
         }
     }
 
