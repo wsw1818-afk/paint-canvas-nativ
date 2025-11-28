@@ -966,22 +966,27 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     /**
      * 색상+텍스처 비트맵 즉시 생성 (동기적)
+     * 🎨 색상 정확도 우선: 팔레트 색상을 먼저 깔고, 텍스처를 살짝 오버레이
      */
     private fun createColoredTexture(pattern: Bitmap, color: Int): Bitmap {
         val s = pattern.width
         val bitmap = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
         val tempCanvas = Canvas(bitmap)
 
-        // 1. 텍스처 패턴을 먼저 그리기 (선명하게)
-        tempCanvas.drawBitmap(pattern, 0f, 0f, null)
-
-        // 2. 팔레트 색상을 반투명하게 오버레이 (40% 투명도)
+        // 1. 팔레트 색상을 먼저 100% 불투명하게 깔기 (정확한 색상)
         colorOverlayPaint.color = color
-        colorOverlayPaint.alpha = 100
+        colorOverlayPaint.alpha = 255
         tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), colorOverlayPaint)
+
+        // 2. 텍스처 패턴을 반투명하게 오버레이 (25% 투명도로 은은하게)
+        textureOverlayPaint.alpha = 64
+        tempCanvas.drawBitmap(pattern, 0f, 0f, textureOverlayPaint)
 
         return bitmap
     }
+
+    // 텍스처 오버레이용 Paint (반투명)
+    private val textureOverlayPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     // 색상 오버레이용 Paint (반투명)
     private val colorOverlayPaint = Paint(Paint.ANTI_ALIAS_FLAG)
