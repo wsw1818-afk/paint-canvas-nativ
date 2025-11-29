@@ -15,6 +15,11 @@ class PaintCanvasModule : Module() {
       currentView?.captureCanvas(size)
     }
 
+    // 📸 썸네일 캡처 함수 (원본 이미지 + 색칠된 부분 오버레이)
+    Function("captureThumbnail") { size: Int ->
+      currentView?.captureThumbnail(size)
+    }
+
     View(PaintCanvasView::class) {
       // View 생성 시 참조 저장
       OnViewDidUpdateProps { view: PaintCanvasView ->

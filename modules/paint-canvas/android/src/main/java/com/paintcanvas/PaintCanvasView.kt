@@ -1,10 +1,13 @@
 package com.paintcanvas
 
+import android.animation.ValueAnimator
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.*
 import android.net.Uri
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.animation.DecelerateInterpolator
 import android.util.Base64
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
@@ -12,6 +15,9 @@ import expo.modules.kotlin.views.ExpoView
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class CellData(
     val row: Int,
@@ -31,12 +37,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         color = Color.parseColor("#E0E0E0")
     }
 
+    // 🔄 자동 저장용 SharedPreferences
+    private val prefs: SharedPreferences = context.getSharedPreferences("PaintCanvasProgress", Context.MODE_PRIVATE)
+    private var currentGameId: String? = null
+    private var saveJob: Job? = null
+    private val saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     private var gridSize: Int = 60
     private var cells: List<CellData> = emptyList()
     private var selectedColorHex: String = "#FF0000"
     private var selectedLabel: String = "A"
     private var imageUri: String? = null
-    private var isEraseMode: Boolean = false  // X ?�거 모드
+    private var isEraseMode: Boolean = false  // X 제거 모드
 
     fun setGridSize(value: Int) {
         android.util.Log.d("PaintCanvas", "📐 setGridSize called: $value, current canvasWidth=$canvasWidth")
@@ -46,10 +58,28 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // canvasWidth should be set by setViewSize() from JavaScript
         cellSize = canvasWidth / gridSize
 
-        // 줌 레벨: 1x → 17x → 20x (고정 3단계)
-        maxZoom = 20f
-        ZOOM_LEVELS = floatArrayOf(1f, 17f, 20f)
-        android.util.Log.d("PaintCanvas", "📐 Zoom levels: ${ZOOM_LEVELS.toList()}")
+        // 난이도별 줌 레벨 설정
+        // 두 손가락 탭: 1x → 10x → 최대 → 1x 순환
+        // gridSize 클수록 maxZoom 높임
+        when {
+            gridSize <= 120 -> {  // 쉬움: 120×120
+                maxZoom = 10f
+                ZOOM_LEVELS = floatArrayOf(1f, 10f)  // 1x → 10x → 1x
+            }
+            gridSize <= 160 -> {  // 보통: 160×160
+                maxZoom = 12f
+                ZOOM_LEVELS = floatArrayOf(1f, 10f, 12f)  // 1x → 10x → 12x → 1x
+            }
+            gridSize <= 200 -> {  // 어려움: 200×200
+                maxZoom = 15f
+                ZOOM_LEVELS = floatArrayOf(1f, 10f, 15f)  // 1x → 10x → 15x → 1x
+            }
+            else -> {  // 초고화질: 250×250+
+                maxZoom = 20f
+                ZOOM_LEVELS = floatArrayOf(1f, 10f, 20f)  // 1x → 10x → 20x → 1x
+            }
+        }
+        android.util.Log.d("PaintCanvas", "📐 gridSize=$gridSize, maxZoom=$maxZoom, Zoom levels: ${ZOOM_LEVELS.toList()}")
 
         invalidate()
     }
@@ -57,22 +87,62 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // ⚡ 셀 데이터 임시 저장 (gridSize 설정 후 인덱스 재계산용)
     private var pendingCellList: List<Map<String, Any>>? = null
 
+    // ⚡ 저장된 진행 상황 임시 저장 (setCells 후 복원용)
+    private var pendingFilledCells: List<String>? = null
+    private var pendingWrongCells: List<String>? = null
+
+    // 🔄 마지막으로 설정된 cells 크기 추적 (중복 초기화 방지)
+    private var lastCellsSize: Int = 0
+
     fun setCells(cellList: List<Map<String, Any>>) {
-        // ⚡ 최적화: 배열 사전 할당 + 단일 루프로 처리
         val size = cellList.size
+        if (size == 0) return
+
+        val startTime = System.currentTimeMillis()
 
         // 🐛 버그 수정: gridSize가 아직 설정되지 않았을 수 있음
-        // 셀 개수로부터 gridSize 추론 (gridSize * gridSize = 총 셀 수)
         val inferredGridSize = kotlin.math.sqrt(size.toDouble()).toInt()
         if (inferredGridSize > 0 && inferredGridSize * inferredGridSize == size && gridSize != inferredGridSize) {
-            android.util.Log.d("PaintCanvas", "🔧 setCells: gridSize 자동 추론 $gridSize → $inferredGridSize")
             gridSize = inferredGridSize
             cellSize = if (canvasWidth > 0) canvasWidth / gridSize else 0f
         }
 
-        val newCells = ArrayList<CellData>(size)
+        // ✅ 동일한 퍼즐 재진입 시 상태 초기화 방지
+        // 크기가 같고 이미 cells가 설정된 경우 = 같은 퍼즐 재진입
+        if (size == lastCellsSize && cells.isNotEmpty()) {
+            android.util.Log.d("PaintCanvas", "⚡ setCells 스킵: 동일한 퍼즐 재진입 (size=$size, filled=${filledCells.size})")
+            // pending 데이터만 복원 (있으면)
+            var restoredInReentry = false
+            pendingFilledCells?.let { pending ->
+                android.util.Log.d("PaintCanvas", "🔄 pendingFilledCells 복원 (재진입): ${pending.size}개")
+                for (cellKey in pending) {
+                    filledCells.add(cellKey)
+                    val idx = parseIndex(cellKey)
+                    if (idx >= 0) filledCellIndices.add(idx)
+                }
+                pendingFilledCells = null
+                restoredInReentry = true
+            }
+            pendingWrongCells?.let { pending ->
+                android.util.Log.d("PaintCanvas", "🔄 pendingWrongCells 복원 (재진입): ${pending.size}개")
+                for (cellKey in pending) {
+                    wrongPaintedCells.add(cellKey)
+                    val idx = parseIndex(cellKey)
+                    if (idx >= 0) wrongCellIndices.add(idx)
+                }
+                pendingWrongCells = null
+                restoredInReentry = true
+            }
+            if (restoredInReentry) {
+                invalidate()
+            }
+            return
+        }
 
-        // 🔄 새 퍼즐 로드 시 모든 상태 초기화 (JS 동기화 무시 해제)
+        // 🔄 새 퍼즐 로드 시 모든 상태 초기화
+        android.util.Log.d("PaintCanvas", "🔄 setCells: 새 퍼즐 로드, 상태 초기화 (old=$lastCellsSize, new=$size)")
+        lastCellsSize = size
+        hasUserPainted = false  // ✅ 새 퍼즐이면 사용자 색칠 플래그 리셋
         filledCells.clear()
         filledCellIndices.clear()
         wrongPaintedCells.clear()
@@ -81,15 +151,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         lastPaintedCellIndex = -1
         lastPaintedRow = -1
         lastPaintedCol = -1
-
-        // Map 용량 미리 할당
         targetColorMap.clear()
         labelMap.clear()
         parsedColorMap.clear()
         labelMapByIndex.clear()
-        paintedColorMapInt.clear()  // ⚡ 파싱된 색상 캐시 초기화
+        paintedColorMapInt.clear()
         paintedColorMap.clear()
-        filledCellTextureCache.clear()  // 텍스처 캐시도 초기화
+        filledCellTextureCache.clear()
+
+        // ⚡ 최적화: 배열 사전 할당 + 지역 변수로 캐싱
+        val newCells = ArrayList<CellData>(size)
+        val localGridSize = gridSize
+        val hasBitmap = backgroundBitmap != null
 
         for (cellMap in cellList) {
             val row = (cellMap["row"] as? Number)?.toInt() ?: 0
@@ -99,29 +172,38 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             newCells.add(CellData(row, col, targetColorHex, label))
 
-            val key = "$row-$col"
-            targetColorMap[key] = targetColorHex
-            labelMap[key] = label
-
-            // ⚡ Int 인덱스 기반 캐시: backgroundBitmap에서 실제 픽셀 색상 읽기
-            val cellIndex = row * gridSize + col
+            // ⚡ String key 생성 제거 - Int 인덱스만 사용
+            val cellIndex = row * localGridSize + col
             labelMapByIndex[cellIndex] = label
 
-            // ✨ 텍스처가 적용된 원본 이미지에서 픽셀 색상 추출
-            val pixelColor = if (backgroundBitmap != null) {
-                getOriginalPixelColor(row, col)
-            } else {
-                try { Color.parseColor(targetColorHex) } catch (e: Exception) { Color.GRAY }
-            }
-            parsedColorMap[cellIndex] = pixelColor
+            // ⚡ 색상 파싱은 필요할 때만 (지연 로딩)
+            // parsedColorMap은 onDraw나 터치 시 lazy하게 채움
         }
 
         cells = newCells
-        pendingCellList = null  // 처리 완료
+        pendingCellList = null
 
-        // 디버그: targetColorMap 상태 확인
-        if (size > 0) {
-            android.util.Log.d("PaintCanvas", "📦 setCells: ${size}개, gridSize=$gridSize, labelMapByIndex.size=${labelMapByIndex.size}")
+        android.util.Log.d("PaintCanvas", "📦 setCells: ${size}개, ${System.currentTimeMillis() - startTime}ms")
+
+        // 🔄 저장된 진행 상황 복원 (setFilledCells/setWrongCells가 먼저 호출된 경우)
+        pendingFilledCells?.let { pending ->
+            android.util.Log.d("PaintCanvas", "🔄 pendingFilledCells 복원: ${pending.size}개")
+            for (cellKey in pending) {
+                filledCells.add(cellKey)
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) filledCellIndices.add(idx)
+            }
+            pendingFilledCells = null
+        }
+
+        pendingWrongCells?.let { pending ->
+            android.util.Log.d("PaintCanvas", "🔄 pendingWrongCells 복원: ${pending.size}개")
+            for (cellKey in pending) {
+                wrongPaintedCells.add(cellKey)
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) wrongCellIndices.add(idx)
+            }
+            pendingWrongCells = null
         }
 
         invalidate()
@@ -198,46 +280,106 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // ⚡ 비동기 이미지 로딩용 코루틴 스코프
+    private val imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var isImageLoading = false
+
     fun setImageUri(uri: String) {
+        if (imageUri == uri && originalBitmap != null) {
+            // 이미 같은 이미지가 로드되어 있으면 스킵
+            android.util.Log.d("PaintCanvas", "⚡ 이미지 이미 로드됨, 스킵")
+            return
+        }
+
         imageUri = uri
-        val loadedBitmap = loadBitmap(uri)
+        isImageLoading = true
 
-        // ✨ 원본 이미지 저장 (ORIGINAL 완성 모드용)
-        originalBitmap = loadedBitmap
+        // 🔄 gameId 생성 및 저장된 진행 상황 복원
+        val fileName = uri.substringAfterLast("/").substringBeforeLast(".")
+        currentGameId = "native_${fileName}_${gridSize}"
+        android.util.Log.d("PaintCanvas", "🔄 gameId 설정: $currentGameId")
+        loadProgressFromPrefs()
 
-        // ✨ 텍스처 적용된 이미지 생성 (WEAVE 완성 모드용)
-        backgroundBitmap = if (loadedBitmap != null && filledCellPatternBitmap != null) {
-            applyTextureToOriginalImage(loadedBitmap, filledCellPatternBitmap!!)
-        } else {
-            loadedBitmap
-        }
-
-        // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
-        if (backgroundBitmap != null && cells.isNotEmpty()) {
-            for (cell in cells) {
-                val cellIndex = cell.row * gridSize + cell.col
-                parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
-            }
-            android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
-        }
-
-        android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
+        // 로딩 인디케이터 표시를 위해 먼저 그리기
         invalidate()
+
+        // ⚡ 백그라운드에서 이미지 로드 (UI 블로킹 방지)
+        imageLoadScope.launch {
+            val startTime = System.currentTimeMillis()
+
+            // 1. 이미지 로드 (IO 스레드)
+            val loadedBitmap = loadBitmap(uri)
+
+            // 2. 텍스처 적용 (CPU 집약적 작업)
+            val texturedBitmap = if (loadedBitmap != null && filledCellPatternBitmap != null) {
+                applyTextureToOriginalImage(loadedBitmap, filledCellPatternBitmap!!)
+            } else {
+                loadedBitmap
+            }
+
+            val loadTime = System.currentTimeMillis() - startTime
+            android.util.Log.d("PaintCanvas", "⚡ 비동기 이미지 로드 완료: ${loadTime}ms")
+
+            // 3. 메인 스레드에서 UI 업데이트
+            withContext(Dispatchers.Main) {
+                originalBitmap = loadedBitmap
+                backgroundBitmap = texturedBitmap
+
+                // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
+                if (backgroundBitmap != null && cells.isNotEmpty()) {
+                    for (cell in cells) {
+                        val cellIndex = cell.row * gridSize + cell.col
+                        parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
+                    }
+                    android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
+                }
+
+                isImageLoading = false
+                android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
+                invalidate()
+            }
+        }
     }
 
-    fun setFilledCells(cells: List<String>) {
-        // ⚡⚡ 최적화: JS 동기화 완전 무시!
-        // Native가 터치 이벤트를 직접 처리하므로 JS에서 보내는 데이터는 항상 지연된 중복 데이터
-        // 앱 복원 시에만 필요한데, 그 경우 Native filledCells가 비어있음
-        if (filledCells.isNotEmpty()) return  // Native가 이미 상태 관리 중이면 무시
+    // 🔄 터치로 색칠 시작 여부 (true면 JS 업데이트 무시)
+    private var hasUserPainted: Boolean = false
 
-        // 앱 복원 시: Native filledCells가 비어있을 때만 JS 데이터로 초기화
-        for (cellKey in cells) {
-            filledCells.add(cellKey)
-            val idx = parseIndex(cellKey)
-            if (idx >= 0) filledCellIndices.add(idx)
+    fun setFilledCells(cellsFromJs: List<String>) {
+        // 🔄 진행 상황 복원 로직:
+        // - setCells가 아직 호출되지 않았으면 pendingFilledCells에 저장
+        // - setCells가 이미 호출됐으면 즉시 복원
+        // - 사용자가 터치로 색칠 시작했으면 JS 업데이트 무시 (Native가 관리)
+
+        if (cellsFromJs.isEmpty()) return  // 빈 데이터는 무시
+
+        // ✅ 사용자가 터치로 색칠 시작했으면 JS 업데이트 무시
+        if (hasUserPainted) {
+            android.util.Log.d("PaintCanvas", "⚡ setFilledCells 무시: 사용자가 색칠 시작함, Native가 관리 중")
+            return
         }
-        if (cells.isNotEmpty()) invalidate()  // 복원 시에만 다시 그리기
+
+        // cells가 아직 설정되지 않았으면 pending에 저장 (setCells에서 복원)
+        if (cells.isEmpty()) {
+            android.util.Log.d("PaintCanvas", "📥 setFilledCells: cells 미설정, pending에 ${cellsFromJs.size}개 저장")
+            pendingFilledCells = cellsFromJs
+            return
+        }
+
+        // cells가 설정된 상태 → 즉시 복원
+        // ✅ 기존 데이터와 비교하여 더 많은 경우에만 복원 (JS → Native 방향만)
+        if (cellsFromJs.size > filledCells.size) {
+            android.util.Log.d("PaintCanvas", "🔄 setFilledCells: 복원 (JS=${cellsFromJs.size}개 > Native=${filledCells.size}개)")
+            filledCells.clear()
+            filledCellIndices.clear()
+            for (cellKey in cellsFromJs) {
+                filledCells.add(cellKey)
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) filledCellIndices.add(idx)
+            }
+            invalidate()
+        } else {
+            android.util.Log.d("PaintCanvas", "⚡ setFilledCells 스킵: Native=${filledCells.size}개 >= JS=${cellsFromJs.size}개")
+        }
     }
 
     // ⚡ 헬퍼: "row-col" 문자열을 인덱스로 변환
@@ -249,20 +391,40 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         return row * gridSize + col
     }
 
-    fun setWrongCells(cells: List<String>) {
-        // ⚡⚡ 최적화: JS 동기화 완전 무시!
-        // Native가 터치 이벤트를 직접 처리하므로 JS에서 보내는 데이터는 항상 지연된 중복 데이터
+    fun setWrongCells(cellsFromJs: List<String>) {
+        // 🔄 진행 상황 복원 로직 (setFilledCells와 동일한 패턴)
         recentlyRemovedWrongCells.clear()
 
-        // 앱 복원 시: Native wrongPaintedCells가 비어있을 때만 JS 데이터로 초기화
-        if (wrongPaintedCells.isNotEmpty()) return
+        if (cellsFromJs.isEmpty()) return  // 빈 데이터는 무시
 
-        for (cellKey in cells) {
-            wrongPaintedCells.add(cellKey)
-            val idx = parseIndex(cellKey)
-            if (idx >= 0) wrongCellIndices.add(idx)
+        // ✅ 사용자가 터치로 색칠 시작했으면 JS 업데이트 무시
+        if (hasUserPainted) {
+            android.util.Log.d("PaintCanvas", "⚡ setWrongCells 무시: 사용자가 색칠 시작함, Native가 관리 중")
+            return
         }
-        if (cells.isNotEmpty()) invalidate()  // 복원 시에만 다시 그리기
+
+        // cells가 아직 설정되지 않았으면 pending에 저장 (setCells에서 복원)
+        if (cells.isEmpty()) {
+            android.util.Log.d("PaintCanvas", "📥 setWrongCells: cells 미설정, pending에 ${cellsFromJs.size}개 저장")
+            pendingWrongCells = cellsFromJs
+            return
+        }
+
+        // cells가 설정된 상태 → 즉시 복원
+        // ✅ 기존 데이터와 비교하여 더 많은 경우에만 복원 (JS → Native 방향만)
+        if (cellsFromJs.size > wrongPaintedCells.size) {
+            android.util.Log.d("PaintCanvas", "🔄 setWrongCells: 복원 (JS=${cellsFromJs.size}개 > Native=${wrongPaintedCells.size}개)")
+            wrongPaintedCells.clear()
+            wrongCellIndices.clear()
+            for (cellKey in cellsFromJs) {
+                wrongPaintedCells.add(cellKey)
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) wrongCellIndices.add(idx)
+            }
+            invalidate()
+        } else {
+            android.util.Log.d("PaintCanvas", "⚡ setWrongCells 스킵: Native=${wrongPaintedCells.size}개 >= JS=${cellsFromJs.size}개")
+        }
     }
 
     fun setUndoMode(enabled: Boolean) {
@@ -381,8 +543,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 완성 모드: "ORIGINAL" = 원본 이미지 표시, "WEAVE" = 위빙 텍스처 유지
     private var completionMode = "ORIGINAL"
 
-    // 4-step zoom levels: 1x → 5x → 10x → 15x → back to 1x
-    private var ZOOM_LEVELS = floatArrayOf(1f, 5f, 10f, 15f)
+    // 4-step zoom levels: 최대 배율(15x)의 70% → 80% → 90% → 100% → back to 1x
+    // 첫 확대 시 바로 작업 가능한 크기(70%)부터 시작
+    private var ZOOM_LEVELS = floatArrayOf(1f, 10.5f, 12f, 13.5f, 15f)
     private var maxZoom = 15f
     private var currentZoomIndex = 0
     private var twoFingerTapStartTime = 0L
@@ -397,103 +560,192 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val TAP_TIMEOUT = 500L  // Max time for a tap (ms) - increased for easier detection
     private val TAP_SLOP = 100f  // Max movement for a tap (pixels) - increased tolerance
 
-    // 핀치 줌 단계 전환을 위한 변수
-    private var pinchZoomTriggered = false
-    private var pinchStartSpan = 0f
-    // ⚡ 핀치 줌 임계값 (이동 중 오작동 방지)
-    private val PINCH_ZOOM_IN_THRESHOLD = 80f    // 확대: 손가락 벌림 거리 (px)
-    private val PINCH_ZOOM_OUT_THRESHOLD = 120f  // 축소: 손가락 모음 거리 (더 높게)
+    // 🎯 연속 핀치 줌 (Google Maps 스타일)
+    private var isPinching = false
+    private var pinchStartScale = 1f  // 핀치 시작 시 스케일
+    private var pinchStartSpan = 0f   // 핀치 시작 시 손가락 거리
+    private var isPanMode = false     // 🔒 팬 모드 활성화 시 줌 완전 차단
+    private var isZoomMode = false    // 🔍 줌 모드 활성화 시 팬 중 줌 허용
+    private var lastSpan = 0f         // 이전 손가락 거리 (줌/팬 판별용)
+
+    // 🎬 부드러운 줌 애니메이션 (두 손가락 탭용)
+    private var zoomAnimator: ValueAnimator? = null
+    private val ZOOM_ANIMATION_DURATION = 250L  // 애니메이션 지속 시간 (ms)
+
+    // ⚡ 프레임 레이트 제한 (60fps = 16ms, 120fps = 8ms)
+    private var lastInvalidateTime = 0L
+    private val MIN_INVALIDATE_INTERVAL = 12L  // ~83fps 최대
 
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
-            // 이미 이번 제스처에서 줌이 적용됐으면 무시
-            if (pinchZoomTriggered) return true
-
-            val currentSpan = detector.currentSpan
-            val spanDiff = currentSpan - pinchStartSpan
-
-            // 확대/축소 방향에 따라 다른 임계값 적용
-            val threshold = if (spanDiff > 0) PINCH_ZOOM_IN_THRESHOLD else PINCH_ZOOM_OUT_THRESHOLD
-
-            // 충분한 핀치 동작이 감지되면 단계 전환
-            if (Math.abs(spanDiff) > threshold) {
-                pinchZoomTriggered = true
-
-                val focusX = detector.focusX
-                val focusY = detector.focusY
-                val prevScale = scaleFactor
-
-                if (spanDiff > 0) {
-                    // 핀치 아웃 (확대) - 다음 단계로
-                    if (currentZoomIndex < ZOOM_LEVELS.size - 1) {
-                        currentZoomIndex++
-                        scaleFactor = ZOOM_LEVELS[currentZoomIndex]
-                        android.util.Log.d("PaintCanvas", "🔍 Pinch zoom IN: index=$currentZoomIndex, scale=$scaleFactor")
-                    }
-                } else {
-                    // 핀치 인 (축소) - 이전 단계로
-                    if (currentZoomIndex > 0) {
-                        currentZoomIndex--
-                        scaleFactor = ZOOM_LEVELS[currentZoomIndex]
-                        android.util.Log.d("PaintCanvas", "🔍 Pinch zoom OUT: index=$currentZoomIndex, scale=$scaleFactor")
-                    }
-                }
-
-                // 줌 레벨이 실제로 변경됐으면 위치 조정
-                if (scaleFactor != prevScale) {
-                    if (scaleFactor == 1f) {
-                        // 1x로 축소시 중앙으로 리셋
-                        translateX = (canvasViewWidth - canvasWidth) / 2f
-                        translateY = (canvasViewHeight - canvasWidth) / 2f
-                    } else {
-                        // 포커스 포인트를 기준으로 확대/축소
-                        val scaleDelta = scaleFactor / prevScale
-                        translateX = focusX - (focusX - translateX) * scaleDelta
-                        translateY = focusY - (focusY - translateY) * scaleDelta
-                    }
-                    applyBoundaries()
-                    invalidate()
-                }
+            // 🔒 팬 모드가 명확히 활성화되면 줌 차단 (줌 모드면 허용)
+            if (isPanMode && !isZoomMode) {
+                return true
             }
+
+            // 🔍 아직 모드가 결정되지 않았으면 줌 허용 (기본 동작)
+            // isPanMode=false, isZoomMode=false 상태에서도 줌 가능
+
+            // ⚠️ 안전 체크: pinchStartSpan이 0이면 무시
+            if (pinchStartSpan <= 0f) {
+                return true
+            }
+
+            // 🎯 5단계 줌
+            // 확대: 1x→80%, 80%→100%
+            // 축소: 100%→80%, 80%→50%, 50%→1x
+            val spanRatio = detector.currentSpan / pinchStartSpan
+            val zoomTarget80 = maxZoom * 0.8f
+            val zoomTarget50 = maxZoom * 0.5f
+
+            // 🔧 경계값 허용 오차 (부동소수점 비교 문제 방지)
+            val tolerance = 0.01f
+
+            // ⚡ 가속 줌: 손가락 50% 벌리면/모으면 목표까지 도달
+            var newScale = if (spanRatio >= 1f) {
+                // 🔼 확대: 1x→80%, 80%→100%
+                val expandTarget = if (pinchStartScale < zoomTarget80 - tolerance) zoomTarget80 else maxZoom
+                val progress = (spanRatio - 1f) / 0.5f
+                pinchStartScale + (expandTarget - pinchStartScale) * progress.coerceIn(0f, 1f)
+            } else {
+                // 🔽 축소: 100%→80%, 80%→50%, 50%→1x
+                val shrinkTarget = when {
+                    pinchStartScale > zoomTarget80 + tolerance -> zoomTarget80  // 100%~81% → 80%
+                    pinchStartScale > zoomTarget50 + tolerance -> zoomTarget50  // 80%~51% → 50%
+                    else -> 1f                                                   // 50%~1x → 1x
+                }
+                val progress = (1f - spanRatio) / 0.5f
+                pinchStartScale - (pinchStartScale - shrinkTarget) * progress.coerceIn(0f, 1f)
+            }
+
+            // 범위 제한: 전체 범위 (1x ~ maxZoom)
+            newScale = newScale.coerceIn(1f, maxZoom)
+
+            // 포커스 포인트 기준 줌 적용
+            val focusX = detector.focusX
+            val focusY = detector.focusY
+
+            // 스케일 변화에 따른 위치 조정 (포커스 포인트 유지)
+            val scaleDelta = newScale / scaleFactor
+            translateX = focusX - (focusX - translateX) * scaleDelta
+            translateY = focusY - (focusY - translateY) * scaleDelta
+
+            scaleFactor = newScale
+            applyBoundaries()
+
+            // ⚡ 프레임 레이트 제한
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastInvalidateTime >= MIN_INVALIDATE_INTERVAL) {
+                lastInvalidateTime = currentTime
+                invalidate()
+            }
+
             return true
         }
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             touchMode = TouchMode.ZOOM
-            pinchZoomTriggered = false
-            pinchStartSpan = detector.currentSpan
+            isPinching = true
+            pinchStartScale = scaleFactor  // 현재 스케일 저장
+            pinchStartSpan = detector.currentSpan  // 현재 손가락 거리 저장
+            lastSpan = detector.currentSpan  // 🔍 초기 span 저장
+            // isPanMode, isZoomMode는 ACTION_MOVE에서 동작에 따라 설정됨
+
+            // 진행 중인 애니메이션 취소
+            zoomAnimator?.cancel()
+
             return true
         }
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
             touchMode = TouchMode.NONE
-            pinchZoomTriggered = false
+            isPinching = false
+            isPanMode = false   // 🔒 팬 모드 리셋
+            isZoomMode = false  // 🔍 줌 모드 리셋
+
+            // 🎯 줌 종료 시 currentZoomIndex 동기화 (두 손가락 탭 줌과 일관성)
+            syncZoomIndex()
         }
     })
 
-    // Step zoom: cycle through 1x -> 10x -> 13x -> 1x
-    private fun stepZoom(focusX: Float, focusY: Float) {
-        val prevScale = scaleFactor
+    /**
+     * 현재 scaleFactor에 맞는 zoomIndex 동기화
+     * 핀치 줌 후 두 손가락 탭 줌이 올바르게 작동하도록
+     */
+    private fun syncZoomIndex() {
+        // 현재 스케일에 가장 가까운 줌 레벨 찾기
+        var closestIndex = 0
+        var minDiff = Float.MAX_VALUE
 
-        // Move to next zoom level
-        currentZoomIndex = (currentZoomIndex + 1) % ZOOM_LEVELS.size
-        scaleFactor = ZOOM_LEVELS[currentZoomIndex]
-
-        android.util.Log.d("PaintCanvas", "🔍 Step zoom: index=$currentZoomIndex, scale=$scaleFactor")
-
-        if (scaleFactor == 1f) {
-            // Reset to center when zooming out to 1x
-            translateX = (canvasViewWidth - canvasWidth) / 2f
-            translateY = (canvasViewHeight - canvasWidth) / 2f
-        } else {
-            // Zoom towards focus point
-            val scaleDelta = scaleFactor / prevScale
-            translateX = focusX - (focusX - translateX) * scaleDelta
-            translateY = focusY - (focusY - translateY) * scaleDelta
+        for (i in ZOOM_LEVELS.indices) {
+            val diff = kotlin.math.abs(scaleFactor - ZOOM_LEVELS[i])
+            if (diff < minDiff) {
+                minDiff = diff
+                closestIndex = i
+            }
         }
 
-        applyBoundaries()
-        invalidate()
+        currentZoomIndex = closestIndex
+    }
+
+    // Step zoom: cycle through zoom levels with animation
+    private fun stepZoom(focusX: Float, focusY: Float) {
+        // Move to next zoom level
+        currentZoomIndex = (currentZoomIndex + 1) % ZOOM_LEVELS.size
+        val targetScale = ZOOM_LEVELS[currentZoomIndex]
+
+        android.util.Log.d("PaintCanvas", "🔍 Step zoom: index=$currentZoomIndex, target=$targetScale")
+
+        animateZoomTo(targetScale, focusX, focusY)
+    }
+
+    /**
+     * 🎬 부드러운 줌 애니메이션
+     * @param targetScale 목표 스케일
+     * @param focusX 줌 포커스 X 좌표
+     * @param focusY 줌 포커스 Y 좌표
+     */
+    private fun animateZoomTo(targetScale: Float, focusX: Float, focusY: Float) {
+        // 기존 애니메이션 취소
+        zoomAnimator?.cancel()
+
+        val startScale = scaleFactor
+        val startTranslateX = translateX
+        val startTranslateY = translateY
+
+        // 목표 위치 계산
+        val targetTranslateX: Float
+        val targetTranslateY: Float
+
+        if (targetScale == 1f) {
+            // 1x로 축소시 중앙으로 리셋
+            targetTranslateX = (canvasViewWidth - canvasWidth) / 2f
+            targetTranslateY = (canvasViewHeight - canvasWidth) / 2f
+        } else {
+            // 포커스 포인트를 기준으로 확대/축소
+            val scaleDelta = targetScale / startScale
+            targetTranslateX = focusX - (focusX - startTranslateX) * scaleDelta
+            targetTranslateY = focusY - (focusY - startTranslateY) * scaleDelta
+        }
+
+        zoomAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ZOOM_ANIMATION_DURATION
+            interpolator = DecelerateInterpolator()
+
+            addUpdateListener { animation ->
+                val progress = animation.animatedValue as Float
+
+                // 스케일과 위치를 부드럽게 보간
+                scaleFactor = startScale + (targetScale - startScale) * progress
+                translateX = startTranslateX + (targetTranslateX - startTranslateX) * progress
+                translateY = startTranslateY + (targetTranslateY - startTranslateY) * progress
+
+                applyBoundaries()
+                invalidate()
+            }
+
+            start()
+        }
     }
 
     init {
@@ -546,8 +798,44 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         invalidate()
     }
 
+    // 로딩 인디케이터용 Paint
+    private val loadingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#40E0D0")  // 앱 테마 색상
+        style = Paint.Style.STROKE
+        strokeWidth = 8f
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val loadingTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#40E0D0")
+        textSize = 48f
+        textAlign = Paint.Align.CENTER
+    }
+    private var loadingAngle = 0f
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
+        // ⚡ 이미지 로딩 중일 때 로딩 인디케이터 표시
+        if (isImageLoading) {
+            val centerX = width / 2f
+            val centerY = height / 2f
+            val radius = 40f
+
+            // 회전하는 원형 로딩 인디케이터
+            loadingAngle = (loadingAngle + 10f) % 360f
+            canvas.drawArc(
+                centerX - radius, centerY - radius,
+                centerX + radius, centerY + radius,
+                loadingAngle, 270f, false, loadingPaint
+            )
+
+            // 로딩 텍스트
+            canvas.drawText("로딩 중...", centerX, centerY + radius + 60f, loadingTextPaint)
+
+            // 다음 프레임 요청 (애니메이션)
+            postInvalidateDelayed(16)  // ~60fps
+            return
+        }
 
         // 안전 체크: 캔버스 크기가 유효하지 않으면 그리지 않음
         if (canvasWidth <= 0 || cellSize <= 0 || gridSize <= 0) {
@@ -587,16 +875,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val endRow = min(gridSize - 1, (visibleBottom / cellSize).toInt())
 
         // 1. 보이는 셀만 그리기 (최적화됨!)
-        // 텍스트 크기 미리 계산 (루프 밖에서 한 번만)
-        textPaint.textSize = cellSize * 0.5f
-        val textYOffset = -(textPaint.descent() + textPaint.ascent()) / 2f
-
-        // ⚡ 현재 선택된 색상 미리 파싱 (루프 밖에서 한 번만)
-        val selectedColor = try { Color.parseColor(selectedColorHex) } catch (e: Exception) { Color.RED }
-
         // ⚡ 성능: 루프 내 변수 미리 계산
         val halfCellSize = cellSize / 2f
         val cellSizePlusHalf = cellSize + 0.5f
+
+        // ⚡ 줌 레벨에 따른 텍스트 표시 여부 (확대 시에만 텍스트 표시)
+        // 셀이 화면에서 너무 작으면 텍스트가 안 보이므로 그리기 스킵
+        val screenCellSize = cellSize * scaleFactor
+        val shouldDrawText = screenCellSize > 12f  // 12dp 이상일 때만 텍스트 표시
+
+        // 텍스트 크기 미리 계산 (텍스트 그릴 때만)
+        val textYOffset = if (shouldDrawText) {
+            textPaint.textSize = cellSize * 0.5f
+            -(textPaint.descent() + textPaint.ascent()) / 2f
+        } else 0f
 
         for (row in startRow..endRow) {
             val top = row * cellSize
@@ -618,17 +910,21 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         drawWarningTriangle(canvas, left, top, cellSize)
                     }
                 } else {
-                    // 미색칠 셀 - 흰색 배경에 알파벳만 표시
-                    canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, backgroundClearPaint)
+                    // 미색칠 셀 - 원본 이미지 음영 + 반투명 흰색 오버레이 + 알파벳
+                    // 🎨 참조 앱 스타일: 축소 화면에서도 그림의 음영이 보임
+                    drawUnfilledCellWithShadow(canvas, left, top, cellSize, row, col)
 
-                    // 선택된 라벨 하이라이트 (노란색 반투명)
-                    val label = labelMapByIndex[cellIndex]
-                    if (label == selectedLabel) {
-                        canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, highlightPaint)
+                    // ⚡ 텍스트와 하이라이트는 확대 시에만 (성능 최적화)
+                    if (shouldDrawText) {
+                        // 선택된 라벨 하이라이트 (노란색 반투명)
+                        val label = labelMapByIndex[cellIndex]
+                        if (label == selectedLabel) {
+                            canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, highlightPaint)
+                        }
+
+                        // 알파벳
+                        canvas.drawText(label ?: "A", left + halfCellSize, top + halfCellSize + textYOffset, textPaint)
                     }
-
-                    // 알파벳
-                    canvas.drawText(label ?: "A", left + halfCellSize, top + halfCellSize + textYOffset, textPaint)
                 }
             }
         }
@@ -715,8 +1011,37 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         val centroidX = (event.getX(0) + event.getX(1)) / 2f
                         val centroidY = (event.getY(0) + event.getY(1)) / 2f
 
+                        // 🔍 손가락 거리 계산 (줌/팬 판별용)
+                        val dx0 = event.getX(0) - event.getX(1)
+                        val dy0 = event.getY(0) - event.getY(1)
+                        val currentSpan = kotlin.math.sqrt(dx0 * dx0 + dy0 * dy0)
+
+                        // 🔍 손가락 거리 변화량 (줌 제스처 감지)
+                        val spanChange = kotlin.math.abs(currentSpan - lastSpan)
+                        val spanChangeRatio = if (lastSpan > 0) spanChange / lastSpan else 0f
+
+                        // 중심점 이동량 (팬 제스처 감지)
                         val dx = centroidX - lastTouchX
                         val dy = centroidY - lastTouchY
+                        val moveDistance = kotlin.math.sqrt(dx * dx + dy * dy)
+
+                        // 🎯 줌/팬 모드 동적 판별 (더 민감하게)
+                        // - 손가락 거리가 2% 이상 변하면 → 줌 모드 (핀치 감지)
+                        // - 줌 모드가 아니고 이동이 크면 → 팬 모드
+
+                        // 🔍 줌 모드를 먼저 체크 (핀치 제스처가 우선, 더 민감하게)
+                        if (!isZoomMode && spanChangeRatio > 0.02f) {
+                            isZoomMode = true
+                            isPanMode = false  // 줌이 감지되면 팬 해제
+                        }
+
+                        // 팬 모드는 줌 모드가 아닐 때만
+                        if (!isZoomMode && !isPanMode && moveDistance > 20f) {
+                            isPanMode = true
+                        }
+
+                        lastSpan = currentSpan
+
                         translateX += dx
                         translateY += dy
 
@@ -747,6 +1072,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 preventPaintOnce = false
                 allowPainting = false
                 hasMoved = false
+                isPanMode = false   // 🔒 팬 모드 리셋
+                isZoomMode = false  // 🔍 줌 모드 리셋
 
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
@@ -760,6 +1087,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     touchMode = TouchMode.NONE
                     preventPaintOnce = true
                     allowPainting = false
+                    isPanMode = false   // 🔒 팬 모드 리셋
+                    isZoomMode = false  // 🔍 줌 모드 리셋
                 }
             }
 
@@ -767,6 +1096,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 touchMode = TouchMode.NONE
                 activePointerId = -1
                 hasMoved = false
+                isPanMode = false   // 🔒 팬 모드 리셋
+                isZoomMode = false  // 🔍 줌 모드 리셋
             }
         }
 
@@ -886,12 +1217,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 paintedColorMap.remove(cellKey)
                 recentlyRemovedWrongCells.add(cellKey)
                 queuePaintEvent(row, col, true)
+                // 🔄 자동 저장
+                saveProgressToPrefs()
             }
             return
         }
 
         // ⚠️ 이미 잘못 칠한 셀은 고치기 모드(isEraseMode)에서만 수정 가능
         if (wrongCellIndices.contains(cellIndex)) {
+            return
+        }
+
+        // ✅ 이미 정상적으로 색칠된 셀은 다른 색으로 덧칠 불가
+        // (filledCellIndices에 있지만 wrongCellIndices에 없는 셀 = 정상 색칠됨)
+        if (filledCellIndices.contains(cellIndex)) {
             return
         }
 
@@ -902,24 +1241,31 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // ⚡ 캐시된 색상 사용 (Color.parseColor 호출 제거)
         val parsedSelectedColor = cachedSelectedColorInt
 
-        if (isCorrect) {
-            // Skip if already correctly filled
-            if (filledCellIndices.contains(cellIndex)) {
-                return
-            }
+        // ✅ 사용자가 색칠 시작함 표시 (이후 JS 업데이트 무시)
+        hasUserPainted = true
 
+        // 🔄 String 키 생성 (저장용)
+        val cellKey = "$row-$col"
+
+        if (isCorrect) {
             filledCellIndices.add(cellIndex)
+            filledCells.add(cellKey)  // 🔄 저장용
             paintedColorMapInt[cellIndex] = parsedSelectedColor
             // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트 (지연 생성)
             queuePaintEventWithColor(row, col, true, parsedSelectedColor)
         } else {
             // 새로운 틀린 셀 추가
             wrongCellIndices.add(cellIndex)
+            wrongPaintedCells.add(cellKey)  // 🔄 저장용
             filledCellIndices.add(cellIndex)
+            filledCells.add(cellKey)  // 🔄 저장용
             paintedColorMapInt[cellIndex] = parsedSelectedColor
             // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트 (지연 생성)
             queuePaintEventWithColor(row, col, false, parsedSelectedColor)
         }
+
+        // 🔄 자동 저장 (디바운스 적용)
+        saveProgressToPrefs()
     }
 
     // ⚡ 색상 정보 포함 이벤트 큐잉 (String 생성 지연)
@@ -1054,6 +1400,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val tiledPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val shaderMatrix = Matrix()
 
+    // ⚡ 캐시된 타일 스케일 (줌 레벨 변경 시만 업데이트)
+    private var cachedTileScale = 0f
+    private var lastCellSizeForTile = 0f
+
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         // ✨ 완성 모드에 따라 다른 렌더링 적용
         if (completionMode == "ORIGINAL") {
@@ -1083,19 +1433,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             BitmapShader(texturedBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
         }
 
-        // 타일링 스케일 설정 - 패턴 크기를 셀 크기에 맞춤
-        // 패턴 하나가 셀 하나에 딱 맞게 (1:1 매핑)
-        val squarePattern = squarePatternBitmap ?: pattern
-        val patternSize = squarePattern.width.toFloat()
-        val tileScale = size / patternSize  // 셀 크기 / 패턴 크기
+        // ⚡ 성능: 타일 스케일이 변경되지 않았으면 재계산 스킵
+        if (size != lastCellSizeForTile) {
+            lastCellSizeForTile = size
+            val squarePattern = squarePatternBitmap ?: pattern
+            val patternSize = squarePattern.width.toFloat()
+            cachedTileScale = size / patternSize
+        }
 
-        shaderMatrix.reset()
-        shaderMatrix.setScale(tileScale, tileScale)
-        // 셀 위치에 맞게 텍스처 오프셋 (연속적인 타일링 효과)
-        // left, top을 패턴 크기로 나눈 나머지로 오프셋
-        val offsetX = (left % size)
-        val offsetY = (top % size)
-        shaderMatrix.postTranslate(left - offsetX, top - offsetY)
+        // ⚡ 성능: 매번 Matrix 재설정 대신 간단한 translate만 (패턴은 고정 스케일)
+        shaderMatrix.setScale(cachedTileScale, cachedTileScale)
+        shaderMatrix.postTranslate(left, top)
         shader.setLocalMatrix(shaderMatrix)
 
         tiledPaint.shader = shader
@@ -1240,6 +1588,47 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // ⚡ 배열로 한 번에 쓰기
         bitmap.setPixels(outPixels, 0, size, 0, 0, size, size)
         return bitmap
+    }
+
+    /**
+     * 🎨 미색칠 셀에 원본 이미지 음영 표시 (참조 앱 스타일)
+     * 원본 이미지를 먼저 그리고 반투명 흰색으로 덮어서 음영만 살짝 보이게
+     */
+    private val shadowOverlayPaint = Paint().apply {
+        color = Color.parseColor("#E8FFFFFF")  // 91% 불투명 흰색 (음영만 살짝 보임)
+        style = Paint.Style.FILL
+    }
+    private var shadowDrawnLogOnce = false
+
+    private fun drawUnfilledCellWithShadow(canvas: Canvas, left: Float, top: Float, size: Float, row: Int, col: Int) {
+        val bitmap = originalBitmap ?: backgroundBitmap
+
+        if (bitmap != null) {
+            // 1단계: 원본 이미지 영역 그리기
+            val srcCellWidth = bitmap.width.toFloat() / gridSize
+            val srcCellHeight = bitmap.height.toFloat() / gridSize
+
+            val srcLeft = (col * srcCellWidth).toInt()
+            val srcTop = (row * srcCellHeight).toInt()
+            val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
+            val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
+
+            reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
+            reusableDstRect.set(left, top, left + size, top + size)
+
+            canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
+
+            // 2단계: 반투명 흰색 오버레이 (음영만 살짝 보이게)
+            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, shadowOverlayPaint)
+
+            if (!shadowDrawnLogOnce) {
+                android.util.Log.d("PaintCanvas", "🎨 미색칠 셀 음영 표시 활성화")
+                shadowDrawnLogOnce = true
+            }
+        } else {
+            // 비트맵 없으면 흰색 배경
+            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, backgroundClearPaint)
+        }
     }
 
     /**
@@ -1438,6 +1827,75 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     /**
+     * 📸 갤러리 썸네일 캡처 - 원본 이미지 위에 색칠된 부분만 오버레이
+     * 참조 앱 스타일: 원본 사진이 배경, 색칠된 셀만 단색으로 표시
+     * @param size 출력 이미지 크기 (정사각형)
+     * @return Base64 인코딩된 PNG 이미지 문자열
+     */
+    fun captureThumbnail(size: Int = 256): String? {
+        if (gridSize <= 0) {
+            android.util.Log.e("PaintCanvas", "❌ captureThumbnail 실패: gridSize=$gridSize")
+            return null
+        }
+
+        val bitmap = originalBitmap ?: backgroundBitmap
+        if (bitmap == null) {
+            android.util.Log.e("PaintCanvas", "❌ captureThumbnail 실패: 원본 비트맵 없음")
+            return null
+        }
+
+        try {
+            val captureSize = size.toFloat()
+            val captureCellSize = captureSize / gridSize
+
+            // 캡처용 비트맵 생성
+            val outputBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(outputBitmap)
+
+            // 1단계: 원본 이미지를 배경으로 그리기
+            val srcRect = Rect(0, 0, bitmap.width, bitmap.height)
+            val dstRect = RectF(0f, 0f, captureSize, captureSize)
+            canvas.drawBitmap(bitmap, srcRect, dstRect, reusableBitmapPaint)
+
+            // 2단계: 색칠된 셀만 단색으로 오버레이
+            val cellPaint = Paint().apply {
+                style = Paint.Style.FILL
+            }
+
+            for (row in 0 until gridSize) {
+                val top = row * captureCellSize
+                val rowOffset = row * gridSize
+
+                for (col in 0 until gridSize) {
+                    val cellIndex = rowOffset + col
+                    val cellColor = paintedColorMapInt[cellIndex]
+
+                    if (cellColor != null) {
+                        // 색칠된 셀 - 단색으로 표시
+                        val left = col * captureCellSize
+                        cellPaint.color = cellColor
+                        canvas.drawRect(left, top, left + captureCellSize + 0.5f, top + captureCellSize + 0.5f, cellPaint)
+                    }
+                    // 미색칠 셀은 원본 이미지 그대로 (이미 배경에 그려짐)
+                }
+            }
+
+            // Base64로 인코딩
+            val outputStream = ByteArrayOutputStream()
+            outputBitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)
+            val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+
+            outputBitmap.recycle()
+            android.util.Log.d("PaintCanvas", "📸 썸네일 캡처 완료: ${size}x${size}, 색칠된 셀=${paintedColorMapInt.size}")
+
+            return base64String
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ captureThumbnail 예외: ${e.message}")
+            return null
+        }
+    }
+
+    /**
      * 캡처용 셀 렌더링 (완성 모드에 따라 다르게 처리)
      */
     private fun drawCapturedCell(canvas: Canvas, left: Float, top: Float, size: Float, color: Int, row: Int, col: Int) {
@@ -1477,6 +1935,106 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
             }
+        }
+    }
+
+    // ⚡ 뷰 분리 시 코루틴 정리 및 진행 상황 저장
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // 즉시 저장 (비동기 저장 취소하고 동기적으로 저장)
+        saveJob?.cancel()
+        saveProgressToPrefsSync()
+        imageLoadScope.cancel()
+        saveScope.cancel()
+        android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, coroutine scopes cancelled")
+    }
+
+    // ====== 🔄 자동 저장/복원 기능 ======
+
+    /**
+     * SharedPreferences에서 저장된 진행 상황 복원
+     */
+    private fun loadProgressFromPrefs() {
+        val gameId = currentGameId ?: return
+
+        try {
+            val json = prefs.getString(gameId, null) ?: return
+            val data = JSONObject(json)
+
+            val filledArray = data.optJSONArray("filledCells") ?: return
+            val wrongArray = data.optJSONArray("wrongCells")
+
+            // 기존 데이터 클리어
+            filledCells.clear()
+            filledCellIndices.clear()
+            wrongPaintedCells.clear()
+            wrongCellIndices.clear()
+
+            // filledCells 복원
+            for (i in 0 until filledArray.length()) {
+                val cellKey = filledArray.getString(i)
+                filledCells.add(cellKey)
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) filledCellIndices.add(idx)
+            }
+
+            // wrongCells 복원
+            if (wrongArray != null) {
+                for (i in 0 until wrongArray.length()) {
+                    val cellKey = wrongArray.getString(i)
+                    wrongPaintedCells.add(cellKey)
+                    val idx = parseIndex(cellKey)
+                    if (idx >= 0) wrongCellIndices.add(idx)
+                }
+            }
+
+            android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
+            invalidate()
+
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ 진행 상황 복원 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * 진행 상황을 SharedPreferences에 저장 (디바운스 적용)
+     */
+    private fun saveProgressToPrefs() {
+        val gameId = currentGameId ?: return
+        if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
+
+        // 기존 저장 작업 취소
+        saveJob?.cancel()
+
+        // 1초 디바운스로 저장 (너무 자주 저장 방지)
+        saveJob = saveScope.launch {
+            delay(1000)
+            saveProgressToPrefsSync()
+        }
+    }
+
+    /**
+     * 진행 상황을 동기적으로 저장 (뷰 분리 시 사용)
+     */
+    private fun saveProgressToPrefsSync() {
+        val gameId = currentGameId ?: return
+        if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
+
+        try {
+            val filledArray = JSONArray(filledCells.toList())
+            val wrongArray = JSONArray(wrongPaintedCells.toList())
+
+            val data = JSONObject().apply {
+                put("filledCells", filledArray)
+                put("wrongCells", wrongArray)
+                put("timestamp", System.currentTimeMillis())
+            }
+
+            prefs.edit().putString(gameId, data.toString()).apply()
+            android.util.Log.d("PaintCanvas", "💾 진행 상황 저장: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size})")
+
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: ${e.message}")
         }
     }
 }

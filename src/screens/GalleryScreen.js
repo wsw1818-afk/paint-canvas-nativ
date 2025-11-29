@@ -135,15 +135,12 @@ export default function GalleryScreen({ navigation }) {
               ? { icon: '🖼️', name: '원본 이미지', color: '#FF6B6B' }
               : { icon: '🧶', name: '위빙 텍스처', color: '#9B59B6' };
 
-            // 썸네일 이미지 우선순위:
-            // 1. 완성된 이미지 (100% 완성 시 캡처한 결과물)
-            // 2. WEAVE 모드면 위빙 미리보기
-            // 3. 원본 이미지
-            const thumbnailUri = puzzle.completedImageUri
-              ? puzzle.completedImageUri
-              : (completionMode === 'WEAVE' && puzzle.weavePreviewUri
-                  ? puzzle.weavePreviewUri
-                  : (puzzle.imageUri || puzzle.imageBase64));
+            // 썸네일 이미지 우선순위 (단순화):
+            // 1. 진행 썸네일 (원본 이미지 위에 색칠된 부분 오버레이)
+            // 2. 원본 이미지 (아직 색칠 안 한 경우)
+            const thumbnailUri = puzzle.progressThumbnailUri
+              ? puzzle.progressThumbnailUri
+              : (puzzle.imageUri || puzzle.imageBase64);
 
             return (
               <View key={puzzle.id} style={styles.puzzleCard}>

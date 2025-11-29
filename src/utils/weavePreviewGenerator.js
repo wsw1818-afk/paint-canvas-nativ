@@ -25,7 +25,17 @@ export async function generateWeavePreviewImage(imageUri, dominantColors, gridCo
 
     // 1. 미리보기 크기 설정 (256x256로 생성 - 썸네일용)
     const previewSize = 256;
-    const cellSize = previewSize / gridSize;
+
+    // ⚡ 성능 최적화: 미리보기용 gridSize 제한
+    // 256x256 이미지에서 250 그리드 = 1픽셀당 1셀 (과잉)
+    // 64 그리드로 제한 = 4픽셀당 1셀 (시각적 차이 없음, 62500→4096 drawRect 호출)
+    const maxPreviewGrid = 64;
+    const effectiveGridSize = Math.min(gridSize, maxPreviewGrid);
+    const skipFactor = Math.ceil(gridSize / effectiveGridSize);
+
+    console.log(`⚡ 미리보기 최적화: ${gridSize}→${effectiveGridSize} 그리드 (${skipFactor}x 스킵)`);
+
+    const cellSize = previewSize / effectiveGridSize;
 
     // 2. Skia Surface 생성
     const surface = Skia.Surface.Make(previewSize, previewSize);
@@ -37,19 +47,31 @@ export async function generateWeavePreviewImage(imageUri, dominantColors, gridCo
     const canvas = surface.getCanvas();
     const paint = Skia.Paint();
 
-    // 3. 각 셀에 색상 채우기
-    for (let row = 0; row < gridSize; row++) {
-      for (let col = 0; col < gridSize; col++) {
-        const colorIndex = gridColors[row]?.[col] ?? 0;
+    // ⚡ 색상 캐싱: 동일 색상 Skia.Color 재사용
+    const colorCache = new Map();
+
+    // 3. 각 셀에 색상 채우기 (다운샘플링 적용)
+    for (let previewRow = 0; previewRow < effectiveGridSize; previewRow++) {
+      for (let previewCol = 0; previewCol < effectiveGridSize; previewCol++) {
+        // 원본 그리드에서 대표 셀 선택
+        const srcRow = Math.min(previewRow * skipFactor, gridSize - 1);
+        const srcCol = Math.min(previewCol * skipFactor, gridSize - 1);
+
+        const colorIndex = gridColors[srcRow]?.[srcCol] ?? 0;
         const color = dominantColors[colorIndex] || { r: 128, g: 128, b: 128 };
 
-        // Skia 색상 설정 (ARGB)
-        const skiaColor = Skia.Color(`rgb(${color.r}, ${color.g}, ${color.b})`);
+        // ⚡ Skia 색상 캐싱
+        const colorKey = `${color.r},${color.g},${color.b}`;
+        let skiaColor = colorCache.get(colorKey);
+        if (!skiaColor) {
+          skiaColor = Skia.Color(`rgb(${color.r}, ${color.g}, ${color.b})`);
+          colorCache.set(colorKey, skiaColor);
+        }
         paint.setColor(skiaColor);
 
         // 셀 위치 계산
-        const left = col * cellSize;
-        const top = row * cellSize;
+        const left = previewCol * cellSize;
+        const top = previewRow * cellSize;
         const right = left + cellSize + 0.5; // 틈새 방지
         const bottom = top + cellSize + 0.5;
 

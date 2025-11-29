@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView, captureCanvas } from 'paint-canvas-native';
+import { PaintCanvasView, captureCanvas, captureThumbnail } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
@@ -168,45 +168,56 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     }
   }, [actualColors, selectedColor]);
 
-  // 셀 데이터 생성 (동기 - useMemo로 즉시 생성)
-  // ⚡ 최적화: colorStats useEffect 제거 - 불필요한 리렌더링 방지
-  // ⚡ 최적화: 배열 사전 할당 + 루프 최적화
-  const cells = useMemo(() => {
-    if (__DEV__) {
-      console.log('[셀생성] 시작:', { gridSize, colorCount, actualColorsCount: actualColors.length });
-    }
+  // ⚡ 셀 데이터 비동기 생성 (UI 블로킹 방지)
+  const [cells, setCells] = useState([]);
+  const [isCellsReady, setIsCellsReady] = useState(false);
 
-    const colorMap = new Map(actualColors.map(c => [c.id, c.hex]));
-    const totalCells = gridSize * gridSize;
-    const cellList = new Array(totalCells);
-    const actualColorsLength = actualColors.length;
-    const hasGridColors = gridColors && gridColors.length > 0;
+  useEffect(() => {
+    if (actualColors.length === 0) return;
 
-    // ⚡ 루프 최적화: 조건문 최소화
-    for (let idx = 0; idx < totalCells; idx++) {
-      const row = (idx / gridSize) | 0; // 비트 연산으로 정수 변환 (Math.floor 대체)
-      const col = idx % gridSize;
-
-      let targetColorId;
-      if (hasGridColors && gridColors[row]?.[col] !== undefined) {
-        const colorIndex = gridColors[row][col] % actualColorsLength;
-        targetColorId = actualColors[colorIndex]?.id || 'A';
-      } else {
-        targetColorId = actualColors[idx % actualColorsLength]?.id || 'A';
+    // 화면 전환 애니메이션 완료 후 셀 생성 시작
+    const handle = InteractionManager.runAfterInteractions(() => {
+      const startTime = Date.now();
+      if (__DEV__) {
+        console.log('[셀생성] 시작:', { gridSize, colorCount, actualColorsCount: actualColors.length });
       }
 
-      cellList[idx] = {
-        row,
-        col,
-        targetColorHex: colorMap.get(targetColorId) || '#FFFFFF',
-        label: targetColorId,
-      };
-    }
+      const colorMap = new Map(actualColors.map(c => [c.id, c.hex]));
+      const totalCells = gridSize * gridSize;
+      const cellList = new Array(totalCells);
+      const actualColorsLength = actualColors.length;
+      const hasGridColors = gridColors && gridColors.length > 0;
 
-    if (__DEV__) {
-      console.log('[셀생성] 완료:', totalCells, '개 셀');
-    }
-    return cellList;
+      // ⚡ 루프 최적화: 조건문 최소화
+      for (let idx = 0; idx < totalCells; idx++) {
+        const row = (idx / gridSize) | 0;
+        const col = idx % gridSize;
+
+        let targetColorId;
+        if (hasGridColors && gridColors[row]?.[col] !== undefined) {
+          const colorIndex = gridColors[row][col] % actualColorsLength;
+          targetColorId = actualColors[colorIndex]?.id || 'A';
+        } else {
+          targetColorId = actualColors[idx % actualColorsLength]?.id || 'A';
+        }
+
+        cellList[idx] = {
+          row,
+          col,
+          targetColorHex: colorMap.get(targetColorId) || '#FFFFFF',
+          label: targetColorId,
+        };
+      }
+
+      if (__DEV__) {
+        console.log('[셀생성] 완료:', totalCells, '개 셀,', Date.now() - startTime, 'ms');
+      }
+
+      setCells(cellList);
+      setIsCellsReady(true);
+    });
+
+    return () => handle.cancel();
   }, [gridSize, colorCount, gridColors, actualColors]);
 
   // 저장된 진행 상황 불러오기
@@ -294,6 +305,43 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     }
   }, [puzzleId]);
 
+  // 🖼️ 진행 썸네일 캡처 (갤러리에서 진행 상황 표시용)
+  // 원본 이미지 위에 색칠된 부분만 오버레이 (참조 앱 스타일)
+  const lastThumbnailCaptureRef = useRef(0);
+  const THUMBNAIL_CAPTURE_INTERVAL = 10000; // 10초마다 썸네일 갱신
+
+  const captureProgressThumbnail = useCallback(async (progress) => {
+    if (!puzzleId) return;
+
+    // 10초 내 중복 캡처 방지
+    const now = Date.now();
+    if (now - lastThumbnailCaptureRef.current < THUMBNAIL_CAPTURE_INTERVAL) return;
+    lastThumbnailCaptureRef.current = now;
+
+    try {
+      // 📸 Native 썸네일 캡처 (원본 이미지 + 색칠된 부분 오버레이)
+      const base64Image = captureThumbnail(256);
+
+      if (base64Image) {
+        const fileName = `progress_${puzzleId}.png`;
+        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+        await FileSystem.writeAsStringAsync(fileUri, base64Image, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+
+        // 퍼즐 데이터에 진행 썸네일 URI 저장
+        await updatePuzzle(puzzleId, {
+          progressThumbnailUri: fileUri
+        });
+
+        console.log('📸 진행 썸네일 저장:', Math.round(progress) + '%');
+      }
+    } catch (error) {
+      console.error('진행 썸네일 캡처 실패:', error);
+    }
+  }, [puzzleId]);
+
   // 저장 함수 (Ref 사용으로 의존성 제거)
   const saveProgress = useCallback(() => {
     if (!gameId) return;
@@ -323,6 +371,11 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             lastPlayed: new Date().toISOString()
           });
 
+          // 🖼️ 진행 중 썸네일 캡처 (5% 이상일 때만)
+          if (progress >= 5 && progress < 100) {
+            captureProgressThumbnail(progress);
+          }
+
           // 🎉 100% 완성 시 캡처
           if (progress >= 100 && !hasCompletedRef.current) {
             captureAndSaveCompletion();
@@ -332,7 +385,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         console.error('Failed to save progress:', error);
       }
     }, 2000); // 2초 디바운스 (성능 최적화)
-  }, [gameId, puzzleId, gridSize, captureAndSaveCompletion]);
+  }, [gameId, puzzleId, gridSize, captureAndSaveCompletion, captureProgressThumbnail]);
 
   // filledCells 변경 시 자동 저장 (score는 제외 - 너무 자주 변경됨)
   useEffect(() => {
@@ -654,12 +707,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       {/* 색상 팔레트 */}
       {renderPalette()}
 
-      {/* 로딩 오버레이 - 캔버스 위에 표시 (캔버스는 백그라운드에서 초기화) */}
-      {!isCanvasReady && (
+      {/* 로딩 오버레이 - 셀과 진행상황 모두 준비될 때까지 표시 */}
+      {(!isCanvasReady || !isCellsReady) && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#40E0D0" />
-            <Text style={styles.loadingText}>준비 중...</Text>
+            <Text style={styles.loadingText}>
+              {!isCellsReady ? '퍼즐 생성 중...' : '불러오는 중...'}
+            </Text>
           </View>
         </View>
       )}

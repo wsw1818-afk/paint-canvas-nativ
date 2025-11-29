@@ -667,6 +667,12 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
     const cellHeight = actualHeight / gridSize;
     const gridColors = [];
 
+    // ⚡ 성능 최적화: dominantColors의 Lab 값 사전 계산
+    // 기존: 매 셀마다 colorCount번 rgbToLab 호출 → O(gridSize² × colorCount)
+    // 개선: 한 번만 계산하고 재사용 → O(colorCount)
+    const dominantLabColors = dominantColors.map(c => rgbToLab(c.r, c.g, c.b));
+    console.log(`⚡ Lab 색상 사전 계산 완료: ${dominantLabColors.length}개`);
+
     for (let row = 0; row < gridSize; row++) {
       gridColors[row] = [];
       for (let col = 0; col < gridSize; col++) {
@@ -717,16 +723,28 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
           b: cellPixels.length > 0 ? bValues[mid] : 0
         };
 
-        // ★ Lab 색공간 기반 perceptualDistance로 가장 가까운 색상 찾기
-        // 인간 시각에 최적화된 색상 매칭
+        // ⚡ 성능 최적화: 사전 계산된 Lab 값 사용
+        // 셀 픽셀의 Lab 값은 한 번만 계산
+        const cellLab = rgbToLab(cellPixel.r, cellPixel.g, cellPixel.b);
+
         let minDist = Infinity;
         let closestColorIndex = 0;
 
-        for (let i = 0; i < dominantColors.length; i++) {
-          const color = dominantColors[i];
+        for (let i = 0; i < dominantLabColors.length; i++) {
+          const colorLab = dominantLabColors[i];
 
-          // ★ Lab 색공간 기반 지각적 거리 (Delta E)
-          const dist = perceptualDistance(cellPixel, color);
+          // ⚡ 직접 Lab 거리 계산 (rgbToLab 호출 제거)
+          const lightDiff = Math.abs(cellLab.L - colorLab.L);
+          let lightWeight = 1.0;
+          if ((cellLab.L < 25 && colorLab.L >= 25) || (colorLab.L < 25 && cellLab.L >= 25)) {
+            lightWeight = 2.5;
+          }
+
+          const dist = Math.sqrt(
+            Math.pow((cellLab.L - colorLab.L) * lightWeight, 2) +
+            Math.pow(cellLab.a - colorLab.a, 2) +
+            Math.pow(cellLab.b - colorLab.b, 2)
+          );
 
           if (dist < minDist) {
             minDist = dist;
