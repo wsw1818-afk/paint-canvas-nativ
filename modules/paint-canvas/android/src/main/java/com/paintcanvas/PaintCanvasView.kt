@@ -111,8 +111,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         invalidate()
     }
 
+    // ⚡ 파싱된 색상 캐시 (매번 Color.parseColor 호출 방지)
+    private var cachedSelectedColorInt: Int = Color.RED
+
     fun setSelectedColor(colorHex: String) {
+        if (selectedColorHex == colorHex) return  // ⚡ 변경 없으면 스킵
         selectedColorHex = colorHex
+        // ⚡ 색상 변경 시 한 번만 파싱
+        cachedSelectedColorInt = try { Color.parseColor(colorHex) } catch (e: Exception) { Color.RED }
     }
 
     fun setSelectedLabel(label: String) {
@@ -403,9 +409,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 핀치 줌 단계 전환을 위한 변수
     private var pinchZoomTriggered = false
     private var pinchStartSpan = 0f
-    // ⚡ 핀치 줌 임계값 낮춤 (빠른 반응)
-    private val PINCH_ZOOM_IN_THRESHOLD = 35f    // 확대: 손가락 벌림 거리 (px) - 35px로 낮춤
-    private val PINCH_ZOOM_OUT_THRESHOLD = 50f   // 축소: 손가락 모음 거리 - 50px로 낮춤
+    // ⚡ 핀치 줌 임계값 (이동 중 오작동 방지)
+    private val PINCH_ZOOM_IN_THRESHOLD = 80f    // 확대: 손가락 벌림 거리 (px)
+    private val PINCH_ZOOM_OUT_THRESHOLD = 120f  // 축소: 손가락 모음 거리 (더 높게)
 
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -597,42 +603,41 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // ⚡ 현재 선택된 색상 미리 파싱 (루프 밖에서 한 번만)
         val selectedColor = try { Color.parseColor(selectedColorHex) } catch (e: Exception) { Color.RED }
 
+        // ⚡ 성능: 루프 내 변수 미리 계산
+        val halfCellSize = cellSize / 2f
+        val cellSizePlusHalf = cellSize + 0.5f
+
         for (row in startRow..endRow) {
             val top = row * cellSize
+            val rowOffset = row * gridSize
 
             for (col in startCol..endCol) {
                 val left = col * cellSize
+                val cellIndex = rowOffset + col
 
-                // ⚡ 셀 상태 확인: parsedColorMap 사용 (String 파싱 제거)
-                val cellIndex = row * gridSize + col
-                val isFilled = filledCellIndices.contains(cellIndex)
-                val isWrong = wrongCellIndices.contains(cellIndex)
+                // ⚡ 색칠된 셀 색상 직접 조회 (contains 호출 제거)
+                val cellColor = paintedColorMapInt[cellIndex]
 
-                if (isFilled || isWrong) {
-                    // ⚡ 색칠된 셀: paintedColorMapInt에서 파싱된 색상 가져오기 (String 생성/파싱 제거)
-                    val cellColor = paintedColorMapInt[cellIndex] ?: selectedColor
-
+                if (cellColor != null) {
+                    // 색칠된 셀
                     drawFilledCellWithTexture(canvas, left, top, cellSize, cellColor)
 
-                    if (isWrong) {
+                    // ⚡ wrongCellIndices 조회는 색칠된 셀에서만
+                    if (wrongCellIndices.contains(cellIndex)) {
                         drawWarningTriangle(canvas, left, top, cellSize)
                     }
                 } else {
                     // 미색칠 셀 - 흰색 배경에 알파벳만 표시
-                    val right = left + cellSize
-                    val bottom = top + cellSize
-
-                    // 흰색 배경
-                    canvas.drawRect(left, top, right, bottom, backgroundClearPaint)
+                    canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, backgroundClearPaint)
 
                     // 선택된 라벨 하이라이트 (노란색 반투명)
                     val label = labelMapByIndex[cellIndex]
                     if (label == selectedLabel) {
-                        canvas.drawRect(left, top, right, bottom, highlightPaint)
+                        canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, highlightPaint)
                     }
 
-                    // 알파벳 (label이 null이면 "A" 사용)
-                    canvas.drawText(label ?: "A", left + cellSize / 2f, top + cellSize / 2f + textYOffset, textPaint)
+                    // 알파벳
+                    canvas.drawText(label ?: "A", left + halfCellSize, top + halfCellSize + textYOffset, textPaint)
                 }
             }
         }
@@ -699,12 +704,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val dy = event.y - touchStartY
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                            // ⚡ 딜레이 최소화: 30ms 또는 8px 이동 시 즉시 색칠
-                            // 두 손가락 터치는 보통 50ms 내 두 번째 손가락 도착
-                            if (hasMoved || timeSinceDown >= 30L || distance > 8f) {
+                            // ⚡ 두 손가락 터치 방지: 60ms 대기 또는 20px 이동 시 색칠 시작
+                            // 두 손가락은 보통 50ms 내 두 번째 손가락 도착
+                            if (timeSinceDown >= 60L || distance > 20f) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
                                 hasMoved = true
+                            } else if (hasMoved && distance > 5f) {
+                                // 이미 드래그 시작했으면 계속 색칠
+                                handlePainting(event.x, event.y)
                             }
                         }
                     }
@@ -753,6 +761,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 lastPaintedRow = -1
                 lastPaintedCol = -1
                 flushPendingEvents()
+                flushPendingEventsWithColor()  // ⚡ 새 이벤트 시스템도 플러시
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -869,20 +878,21 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
-    // ⚡ 단일 셀 칠하기 (중복 코드 제거)
+    // ⚡ 단일 셀 칠하기 (String 생성 최소화)
     private fun paintSingleCell(row: Int, col: Int) {
         val cellIndex = row * gridSize + col
-        val cellKey = "$row-$col"  // JS 이벤트용
 
         // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
         if (isEraseMode) {
             if (wrongCellIndices.contains(cellIndex)) {
                 wrongCellIndices.remove(cellIndex)
                 filledCellIndices.remove(cellIndex)
+                paintedColorMapInt.remove(cellIndex)
+                // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트
+                val cellKey = "$row-$col"
                 wrongPaintedCells.remove(cellKey)
                 filledCells.remove(cellKey)
                 paintedColorMap.remove(cellKey)
-                paintedColorMapInt.remove(cellIndex)  // ⚡ Int 맵도 제거
                 recentlyRemovedWrongCells.add(cellKey)
                 queuePaintEvent(row, col, true)
             }
@@ -890,17 +900,16 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         // ⚠️ 이미 잘못 칠한 셀은 고치기 모드(isEraseMode)에서만 수정 가능
-        // 일반 색칠로는 X 표시가 사라지지 않음
         if (wrongCellIndices.contains(cellIndex)) {
-            return  // 잘못 칠한 셀은 일반 색칠로 덮어쓸 수 없음
+            return
         }
 
         // Check if label matches selected label
         val cellLabel = labelMapByIndex[cellIndex]
         val isCorrect = cellLabel == selectedLabel
 
-        // ⚡ 색상 한 번만 파싱하여 저장
-        val parsedSelectedColor = try { Color.parseColor(selectedColorHex) } catch (e: Exception) { Color.RED }
+        // ⚡ 캐시된 색상 사용 (Color.parseColor 호출 제거)
+        val parsedSelectedColor = cachedSelectedColorInt
 
         if (isCorrect) {
             // Skip if already correctly filled
@@ -909,20 +918,56 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
 
             filledCellIndices.add(cellIndex)
-            filledCells.add(cellKey)
-            paintedColorMap[cellKey] = selectedColorHex
-            paintedColorMapInt[cellIndex] = parsedSelectedColor  // ⚡ Int 맵에도 저장
-            queuePaintEvent(row, col, true)
+            paintedColorMapInt[cellIndex] = parsedSelectedColor
+            // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트 (지연 생성)
+            queuePaintEventWithColor(row, col, true, parsedSelectedColor)
         } else {
             // 새로운 틀린 셀 추가
             wrongCellIndices.add(cellIndex)
-            filledCellIndices.add(cellIndex)  // 색칠된 상태로도 추가
-            wrongPaintedCells.add(cellKey)
-            filledCells.add(cellKey)
-            paintedColorMap[cellKey] = selectedColorHex
-            paintedColorMapInt[cellIndex] = parsedSelectedColor  // ⚡ Int 맵에도 저장
-            queuePaintEvent(row, col, false)
+            filledCellIndices.add(cellIndex)
+            paintedColorMapInt[cellIndex] = parsedSelectedColor
+            // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트 (지연 생성)
+            queuePaintEventWithColor(row, col, false, parsedSelectedColor)
         }
+    }
+
+    // ⚡ 색상 정보 포함 이벤트 큐잉 (String 생성 지연)
+    private data class PaintEvent(val row: Int, val col: Int, val isCorrect: Boolean, val color: Int)
+    private val pendingPaintEventsWithColor = mutableListOf<PaintEvent>()
+
+    private fun queuePaintEventWithColor(row: Int, col: Int, isCorrect: Boolean, color: Int) {
+        pendingPaintEventsWithColor.add(PaintEvent(row, col, isCorrect, color))
+
+        // 이미 예약된 배치 전송이 있으면 이벤트만 추가
+        if (batchEventRunnable != null) return
+
+        // ⚡ 100ms 후 JS 이벤트 배치 전송
+        batchEventRunnable = Runnable {
+            flushPendingEventsWithColor()
+        }
+        postDelayed(batchEventRunnable, 100)
+    }
+
+    private fun flushPendingEventsWithColor() {
+        batchEventRunnable?.let { removeCallbacks(it) }
+        batchEventRunnable = null
+
+        if (pendingPaintEventsWithColor.isEmpty()) return
+
+        // ⚡ 배치로 String 맵 업데이트 및 JS 이벤트 전송
+        for (event in pendingPaintEventsWithColor) {
+            val cellKey = "${event.row}-${event.col}"
+            if (event.isCorrect) {
+                filledCells.add(cellKey)
+                paintedColorMap[cellKey] = selectedColorHex
+            } else {
+                wrongPaintedCells.add(cellKey)
+                filledCells.add(cellKey)
+                paintedColorMap[cellKey] = selectedColorHex
+            }
+            sendCellPaintedEvent(event.row, event.col, event.isCorrect)
+        }
+        pendingPaintEventsWithColor.clear()
     }
 
     // ⚡ JS 이벤트만 큐에 추가 (invalidate는 handlePainting에서 한 번만)
@@ -932,11 +977,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (batchEventRunnable != null) return
 
-        // ⚡ 50ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지, 반응 속도 향상)
+        // ⚡ 100ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지)
         batchEventRunnable = Runnable {
             flushPendingEvents()
         }
-        postDelayed(batchEventRunnable, 50)
+        postDelayed(batchEventRunnable, 100)
     }
 
 
@@ -1049,6 +1094,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var brightTextureShader: BitmapShader? = null
 
     private var textureDebugLogged = false
+
+    // 🎨 타일링용 BitmapShader 캐시 (색상별)
+    private val tiledShaderCache = mutableMapOf<Int, BitmapShader>()
+    private val tiledPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val shaderMatrix = Matrix()
+
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         // ✨ 완성 모드에 따라 다른 렌더링 적용
         if (completionMode == "ORIGINAL") {
@@ -1057,7 +1108,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             return
         }
 
-        // WEAVE 모드: HSL 텍스처 합성
+        // WEAVE 모드: 타일링 텍스처 합성
         val pattern = filledCellPatternBitmap
         if (pattern == null) {
             // 패턴 없으면 단색 폴백
@@ -1070,40 +1121,175 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             return
         }
 
-        // ⚡ 캐시에서 색상별 텍스처 가져오기 (없으면 HSL 합성으로 생성)
-        val texturedBitmap = filledCellTextureCache.getOrPut(color) {
-            if (!textureDebugLogged) {
-                android.util.Log.d("PaintCanvas", "✨ HSL 텍스처 생성: color=#${Integer.toHexString(color)}, pattern=${pattern.width}x${pattern.height}")
-                textureDebugLogged = true
+        // ⚡ 캐시에서 색상별 타일링 셰이더 가져오기
+        val shader = tiledShaderCache.getOrPut(color) {
+            val texturedBitmap = filledCellTextureCache.getOrPut(color) {
+                createColoredTexture(pattern, color)
             }
-            createTexturedCell(color, pattern, pattern.width)  // 패턴 크기로 생성
+            BitmapShader(texturedBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
         }
 
-        // 셀 크기에 맞게 스케일링하여 그리기
-        reusableTextureRect.set(left, top, left + size + 0.5f, top + size + 0.5f)
-        canvas.drawBitmap(texturedBitmap, null, reusableTextureRect, null)
+        // 타일링 스케일 설정 - 패턴 크기를 셀 크기에 맞춤
+        // 패턴 하나가 셀 하나에 딱 맞게 (1:1 매핑)
+        val squarePattern = squarePatternBitmap ?: pattern
+        val patternSize = squarePattern.width.toFloat()
+        val tileScale = size / patternSize  // 셀 크기 / 패턴 크기
+
+        shaderMatrix.reset()
+        shaderMatrix.setScale(tileScale, tileScale)
+        // 셀 위치에 맞게 텍스처 오프셋 (연속적인 타일링 효과)
+        // left, top을 패턴 크기로 나눈 나머지로 오프셋
+        val offsetX = (left % size)
+        val offsetY = (top % size)
+        shaderMatrix.postTranslate(left - offsetX, top - offsetY)
+        shader.setLocalMatrix(shaderMatrix)
+
+        tiledPaint.shader = shader
+        canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, tiledPaint)
     }
 
     // 재사용 가능한 RectF (매 프레임 객체 생성 방지)
     private val reusableTextureRect = android.graphics.RectF()
 
+    // 정사각형으로 보정된 텍스처 패턴 (aspect ratio 유지)
+    private var squarePatternBitmap: Bitmap? = null
+
+    /**
+     * 텍스처 패턴을 정사각형으로 보정 (비율 왜곡 방지)
+     * 89x84 → 84x84 (작은 쪽 기준으로 크롭)
+     */
+    private fun getSquarePattern(pattern: Bitmap): Bitmap {
+        squarePatternBitmap?.let { return it }
+
+        val w = pattern.width   // 89
+        val h = pattern.height  // 84
+        val size = minOf(w, h)  // 84 (작은 쪽 기준)
+
+        // 중앙 기준 크롭
+        val offsetX = (w - size) / 2
+        val offsetY = (h - size) / 2
+
+        val square = Bitmap.createBitmap(pattern, offsetX, offsetY, size, size)
+        squarePatternBitmap = square
+        android.util.Log.d("PaintCanvas", "✅ 정사각형 텍스처 생성: ${w}x${h} → ${size}x${size}")
+        return square
+    }
+
+    // 텍스처 밝기 범위 (최초 1회 계산)
+    private var texMinLum = 0f
+    private var texMaxLum = 1f
+    private var texLumCalculated = false
+
     /**
      * 색상+텍스처 비트맵 즉시 생성 (동기적)
-     * 🎨 색상 정확도 우선: 팔레트 색상을 먼저 깔고, 텍스처를 살짝 오버레이
+     * 🎨 참조 앱 스타일: 텍스처 밝기를 정규화하여 어두운 색에서도 선명한 하이라이트
      */
     private fun createColoredTexture(pattern: Bitmap, color: Int): Bitmap {
-        val s = pattern.width
-        val bitmap = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
-        val tempCanvas = Canvas(bitmap)
+        // 정사각형으로 보정된 패턴 사용 (비율 왜곡 방지)
+        val squarePattern = getSquarePattern(pattern)
+        val size = squarePattern.width
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
 
-        // 1. 팔레트 색상을 먼저 100% 불투명하게 깔기 (정확한 색상)
-        colorOverlayPaint.color = color
-        colorOverlayPaint.alpha = 255
-        tempCanvas.drawRect(0f, 0f, s.toFloat(), s.toFloat(), colorOverlayPaint)
+        // 텍스처 밝기 범위 계산 (최초 1회)
+        if (!texLumCalculated) {
+            var minL = 1f
+            var maxL = 0f
+            for (py in 0 until size) {
+                for (px in 0 until size) {
+                    val p = squarePattern.getPixel(px, py)
+                    val l = (Color.red(p) + Color.green(p) + Color.blue(p)) / 3f / 255f
+                    if (l < minL) minL = l
+                    if (l > maxL) maxL = l
+                }
+            }
+            texMinLum = minL
+            texMaxLum = maxL
+            texLumCalculated = true
+            android.util.Log.d("PaintCanvas", "📊 텍스처 밝기 범위: min=$minL, max=$maxL")
+        }
 
-        // 2. 텍스처 패턴을 반투명하게 오버레이 (10% 투명도 - 색상 더 진하게)
-        textureOverlayPaint.alpha = 25
-        tempCanvas.drawBitmap(pattern, 0f, 0f, textureOverlayPaint)
+        val r = Color.red(color)
+        val g = Color.green(color)
+        val b = Color.blue(color)
+
+        // 색상 밝기 계산 (0~1)
+        val colorLuminance = (r * 0.299f + g * 0.587f + b * 0.114f) / 255f
+        val lumRange = texMaxLum - texMinLum
+
+        for (y in 0 until size) {
+            for (x in 0 until size) {
+                val texPixel = squarePattern.getPixel(x, y)
+                val texR = Color.red(texPixel)
+                val texG = Color.green(texPixel)
+                val texB = Color.blue(texPixel)
+                val rawLum = (texR + texG + texB) / 3f / 255f
+
+                // 📊 텍스처 밝기를 0~1로 정규화 (상대적 밝기)
+                val normalizedLum = if (lumRange > 0.01f) {
+                    ((rawLum - texMinLum) / lumRange).coerceIn(0f, 1f)
+                } else {
+                    0.5f
+                }
+
+                val newR: Int
+                val newG: Int
+                val newB: Int
+
+                // 🎨 참조 앱 스타일: 텍스처 원본 색상 + 선택 색상 Multiply 블렌딩
+                // 텍스처의 짜임 패턴을 살리면서 색상 입히기
+
+                // 🎨 색상 밝기별 차등 텍스처 적용
+                // colorLuminance: 0(어두운색) ~ 1(밝은색)
+                // normalizedLum: 0(텍스처 어두운부분) ~ 1(텍스처 밝은부분)
+
+                // 색상 밝기 구간별 전략:
+                // 밝은색 (0.7~1.0): 하이라이트만 (그림자 없음)
+                // 중밝기 (0.4~0.7): 하이라이트 강 + 약한 그림자
+                // 중어둠 (0.2~0.4): 균형 명암
+                // 어두운색 (0~0.2): 강한 하이라이트 (어두운 바탕에 밝은 선)
+
+                val highlightStr: Float
+                val shadowStr: Float
+
+                when {
+                    colorLuminance >= 0.7f -> {
+                        // 밝은색: 하이라이트 + 약한 그림자 (문양 보이게)
+                        highlightStr = 0.4f
+                        shadowStr = 0.15f
+                    }
+                    colorLuminance >= 0.4f -> {
+                        // 중간 밝기: 강한 명암
+                        highlightStr = 0.45f
+                        shadowStr = 0.2f
+                    }
+                    colorLuminance >= 0.2f -> {
+                        // 중간 어두움: 균형 명암
+                        highlightStr = 0.5f
+                        shadowStr = 0.2f
+                    }
+                    else -> {
+                        // 어두운색: 강한 하이라이트 + 약한 그림자
+                        highlightStr = 0.55f
+                        shadowStr = 0.15f
+                    }
+                }
+
+                // 하이라이트 (Screen): 텍스처 밝은 부분 → 색상 밝게
+                val highlightAmount = normalizedLum * highlightStr
+                val screenR = r + (255 - r) * highlightAmount
+                val screenG = g + (255 - g) * highlightAmount
+                val screenB = b + (255 - b) * highlightAmount
+
+                // 그림자 (Multiply): 텍스처 어두운 부분 → 색상 어둡게
+                val shadowAmount = (1f - normalizedLum) * shadowStr
+
+                newR = (screenR * (1f - shadowAmount)).toInt().coerceIn(0, 255)
+                newG = (screenG * (1f - shadowAmount)).toInt().coerceIn(0, 255)
+                newB = (screenB * (1f - shadowAmount)).toInt().coerceIn(0, 255)
+
+                bitmap.setPixel(x, y, Color.rgb(newR, newG, newB))
+            }
+        }
 
         return bitmap
     }
