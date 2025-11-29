@@ -5,9 +5,11 @@ import android.graphics.*
 import android.net.Uri
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.util.Base64
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.min
 
@@ -1364,5 +1366,117 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // 중심점의 픽셀 색상 반환
         return bitmap.getPixel(centerX, centerY)
+    }
+
+    /**
+     * 🖼️ 캔버스 캡처 - 현재 색칠된 상태를 이미지로 저장
+     * @param size 출력 이미지 크기 (정사각형)
+     * @return Base64 인코딩된 PNG 이미지 문자열
+     */
+    fun captureCanvas(size: Int = 512): String? {
+        if (gridSize <= 0 || cells.isEmpty()) {
+            android.util.Log.e("PaintCanvas", "❌ captureCanvas 실패: gridSize=$gridSize, cells=${cells.size}")
+            return null
+        }
+
+        try {
+            val captureSize = size.toFloat()
+            val captureCellSize = captureSize / gridSize
+
+            // 캡처용 비트맵 생성
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+
+            // 흰색 배경
+            canvas.drawColor(Color.WHITE)
+
+            // 텍스트 크기 설정
+            val captureTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textAlign = Paint.Align.CENTER
+                style = Paint.Style.FILL
+                textSize = captureCellSize * 0.5f
+            }
+            val textYOffset = -(captureTextPaint.descent() + captureTextPaint.ascent()) / 2f
+
+            // 모든 셀 그리기
+            for (row in 0 until gridSize) {
+                val top = row * captureCellSize
+                val rowOffset = row * gridSize
+
+                for (col in 0 until gridSize) {
+                    val left = col * captureCellSize
+                    val cellIndex = rowOffset + col
+
+                    val cellColor = paintedColorMapInt[cellIndex]
+
+                    if (cellColor != null) {
+                        // 색칠된 셀 - 완성 모드에 따라 렌더링
+                        drawCapturedCell(canvas, left, top, captureCellSize, cellColor, row, col)
+                    } else {
+                        // 미색칠 셀 - 흰색 배경에 라벨
+                        canvas.drawRect(left, top, left + captureCellSize, top + captureCellSize, backgroundClearPaint)
+                        val label = labelMapByIndex[cellIndex] ?: "A"
+                        canvas.drawText(label, left + captureCellSize / 2f, top + captureCellSize / 2f + textYOffset, captureTextPaint)
+                    }
+                }
+            }
+
+            // Base64로 인코딩
+            val outputStream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+
+            bitmap.recycle()
+            android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료: ${size}x${size}, base64 길이=${base64String.length}")
+
+            return base64String
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ captureCanvas 예외: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * 캡처용 셀 렌더링 (완성 모드에 따라 다르게 처리)
+     */
+    private fun drawCapturedCell(canvas: Canvas, left: Float, top: Float, size: Float, color: Int, row: Int, col: Int) {
+        if (completionMode == "ORIGINAL") {
+            // ORIGINAL 모드: 원본 이미지 영역 복사
+            val bitmap = originalBitmap ?: backgroundBitmap
+            if (bitmap != null) {
+                val srcCellWidth = bitmap.width.toFloat() / gridSize
+                val srcCellHeight = bitmap.height.toFloat() / gridSize
+
+                val srcLeft = (col * srcCellWidth).toInt()
+                val srcTop = (row * srcCellHeight).toInt()
+                val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
+                val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
+
+                val srcRect = Rect(srcLeft, srcTop, srcRight, srcBottom)
+                val dstRect = RectF(left, top, left + size, top + size)
+
+                canvas.drawBitmap(bitmap, srcRect, dstRect, reusableBitmapPaint)
+            } else {
+                // 비트맵 없으면 단색
+                reusableBgPaint.color = color
+                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+            }
+        } else {
+            // WEAVE 모드: 텍스처 합성
+            val pattern = filledCellPatternBitmap
+            if (pattern != null) {
+                val texturedBitmap = filledCellTextureCache.getOrPut(color) {
+                    createColoredTexture(pattern, color)
+                }
+                val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
+                val dstRect = RectF(left, top, left + size, top + size)
+                canvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
+            } else {
+                // 패턴 없으면 단색
+                reusableBgPaint.color = color
+                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+            }
+        }
     }
 }

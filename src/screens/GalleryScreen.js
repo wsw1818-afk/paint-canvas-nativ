@@ -135,6 +135,16 @@ export default function GalleryScreen({ navigation }) {
               ? { icon: '🖼️', name: '원본 이미지', color: '#FF6B6B' }
               : { icon: '🧶', name: '위빙 텍스처', color: '#9B59B6' };
 
+            // 썸네일 이미지 우선순위:
+            // 1. 완성된 이미지 (100% 완성 시 캡처한 결과물)
+            // 2. WEAVE 모드면 위빙 미리보기
+            // 3. 원본 이미지
+            const thumbnailUri = puzzle.completedImageUri
+              ? puzzle.completedImageUri
+              : (completionMode === 'WEAVE' && puzzle.weavePreviewUri
+                  ? puzzle.weavePreviewUri
+                  : (puzzle.imageUri || puzzle.imageBase64));
+
             return (
               <View key={puzzle.id} style={styles.puzzleCard}>
                 <TouchableOpacity
@@ -149,9 +159,9 @@ export default function GalleryScreen({ navigation }) {
                     completionMode: completionMode  // 완성 모드 (기본: 원본 이미지)
                   })}
                 >
-                  {/* 이미지 썸네일 - 고화질 */}
+                  {/* 이미지 썸네일 - WEAVE 모드면 위빙 미리보기, 아니면 원본 */}
                   <Image
-                    source={{ uri: puzzle.imageUri || puzzle.imageBase64 }}
+                    source={{ uri: thumbnailUri }}
                     style={styles.thumbnailImage}
                     resizeMode="cover"
                     fadeDuration={0}

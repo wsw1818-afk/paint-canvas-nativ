@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView } from 'paint-canvas-native';
+import { PaintCanvasView, captureCanvas } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -245,6 +246,54 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     scoreRef.current = score;
   }, [filledCells, wrongCells, score]);
 
+  // 🖼️ 100% 완성 시 캡처 및 저장 (한 번만 실행)
+  const hasCompletedRef = useRef(false);
+
+  const captureAndSaveCompletion = useCallback(async () => {
+    if (hasCompletedRef.current || !puzzleId) return;
+    hasCompletedRef.current = true;
+
+    console.log('🎉 100% 완성! 캔버스 캡처 시작...');
+
+    try {
+      // Native 캡처 호출 (512x512 PNG)
+      const base64Image = captureCanvas(512);
+
+      if (base64Image) {
+        // Base64를 파일로 저장
+        const timestamp = Date.now();
+        const fileName = `completed_${puzzleId}_${timestamp}.png`;
+        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+
+        await FileSystem.writeAsStringAsync(fileUri, base64Image, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+
+        console.log('✅ 완성 이미지 저장 완료:', fileUri);
+
+        // 퍼즐 데이터에 완성 이미지 URI 저장
+        await updatePuzzle(puzzleId, {
+          completedImageUri: fileUri,
+          progress: 100,
+          completed: true,
+          completedAt: new Date().toISOString()
+        });
+
+        // 완성 알림
+        Alert.alert(
+          '🎉 축하합니다!',
+          '퍼즐을 완성했습니다!\n갤러리에서 작품을 확인하세요.',
+          [{ text: '확인', style: 'default' }]
+        );
+      } else {
+        console.warn('⚠️ 캔버스 캡처 실패 (null 반환)');
+      }
+    } catch (error) {
+      console.error('❌ 완성 이미지 캡처/저장 실패:', error);
+      hasCompletedRef.current = false; // 재시도 가능하도록
+    }
+  }, [puzzleId]);
+
   // 저장 함수 (Ref 사용으로 의존성 제거)
   const saveProgress = useCallback(() => {
     if (!gameId) return;
@@ -273,12 +322,17 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             progress: progress,
             lastPlayed: new Date().toISOString()
           });
+
+          // 🎉 100% 완성 시 캡처
+          if (progress >= 100 && !hasCompletedRef.current) {
+            captureAndSaveCompletion();
+          }
         }
       } catch (error) {
         console.error('Failed to save progress:', error);
       }
     }, 2000); // 2초 디바운스 (성능 최적화)
-  }, [gameId, puzzleId, gridSize]);
+  }, [gameId, puzzleId, gridSize, captureAndSaveCompletion]);
 
   // filledCells 변경 시 자동 저장 (score는 제외 - 너무 자주 변경됨)
   useEffect(() => {

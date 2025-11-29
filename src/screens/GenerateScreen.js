@@ -7,6 +7,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { processImage } from '../utils/imageProcessor';
 import { savePuzzle } from '../utils/puzzleStorage';
+import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 
 const DIFFICULTIES = [
   { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: '#4CD964' },      // 120×120 = 14,400 셀, 16색
@@ -183,9 +184,27 @@ export default function GenerateScreen({ route, navigation }) {
 
       console.log('이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
 
+      // 4단계: WEAVE 모드 선택 시 위빙 텍스처 미리보기 이미지 생성
+      let weavePreviewUri = null;
+      if (completionMode === 'WEAVE' && processedImage.dominantColors && processedImage.gridColors) {
+        console.log('🧶 위빙 텍스처 미리보기 이미지 생성 중...');
+        try {
+          weavePreviewUri = await generateWeavePreviewImage(
+            permanentUri,
+            processedImage.dominantColors,
+            processedImage.gridColors,
+            difficulty.gridSize
+          );
+          console.log('✅ 위빙 미리보기 저장 완료:', weavePreviewUri);
+        } catch (weaveError) {
+          console.warn('위빙 미리보기 생성 실패, 원본 사용:', weaveError);
+        }
+      }
+
       const puzzleData = {
         title: `퍼즐 ${new Date().toLocaleString('ko-KR')}`,
         imageUri: permanentUri,  // file:// URI로 저장
+        weavePreviewUri: weavePreviewUri,  // 위빙 텍스처 미리보기 이미지 (WEAVE 모드 전용)
         colorCount: difficulty.colors,
         gridSize: difficulty.gridSize,  // 난이도별 격자 크기
         difficulty: selectedDifficulty,

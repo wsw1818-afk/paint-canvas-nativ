@@ -4,15 +4,30 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 class PaintCanvasModule : Module() {
+  // 캡처를 위한 View 참조 저장
+  private var currentView: PaintCanvasView? = null
+
   override fun definition() = ModuleDefinition {
     Name("PaintCanvas")
 
+    // 🖼️ 캔버스 캡처 함수 노출
+    Function("captureCanvas") { size: Int ->
+      currentView?.captureCanvas(size)
+    }
+
     View(PaintCanvasView::class) {
+      // View 생성 시 참조 저장
+      OnViewDidUpdateProps { view: PaintCanvasView ->
+        currentView = view
+      }
+
       Prop("gridSize") { view: PaintCanvasView, gridSize: Int ->
+        currentView = view
         view.setGridSize(gridSize)
       }
 
       Prop("cells") { view: PaintCanvasView, cells: List<Map<String, Any>> ->
+        currentView = view
         view.setCells(cells)
       }
 
