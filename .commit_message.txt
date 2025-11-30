@@ -1,1 +1,1 @@
-🐛 지우기 카운트 버그 수정: stale closure 문제 해결 (wrongCells)
+🔧 크래시 후 진행 복원 + OOM 방지: gameId 형식 통일, 대형 그리드 텍스처 캐시 비활성화

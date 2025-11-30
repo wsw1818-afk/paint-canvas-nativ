@@ -1402,12 +1402,23 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var cachedTileScale = 0f
     private var lastCellSizeForTile = 0f
 
+    // 🎯 대형 그리드 임계값 (이 이상이면 텍스처 캐시 비활성화)
+    private val LARGE_GRID_THRESHOLD = 100  // 100×100 = 10,000 셀
+
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         try {
             // ✨ 완성 모드에 따라 다른 렌더링 적용
             if (completionMode == "ORIGINAL") {
                 // ORIGINAL 모드: 원본 이미지 영역 복사
                 drawOriginalImageCell(canvas, left, top, size)
+                return
+            }
+
+            // 🔧 OOM 방지: 대형 그리드(100×100 이상)에서는 단순 색상으로 그리기
+            // 텍스처 캐시가 메모리를 많이 사용하기 때문
+            if (gridSize >= LARGE_GRID_THRESHOLD) {
+                reusableBgPaint.color = color
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
             }
 

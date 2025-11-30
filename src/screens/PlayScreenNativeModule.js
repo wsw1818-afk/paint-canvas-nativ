@@ -135,11 +135,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebugPanel, setShowDebugPanel] = useState(__DEV__ ? false : false); // 기본 비활성화 (성능)
 
-  // 고유 게임 ID (이미지 URI 기반)
+  // 고유 게임 ID (이미지 URI 기반) - Native와 동일한 형식 사용
+  // ⚠️ Native: "native_${fileName}_${gridSize}" 형식
   const gameId = useMemo(() => {
     if (!imageUri) return null;
-    return `game_${imageUri.split('/').pop()}_${gridSize}_${colorCount}`;
-  }, [imageUri, gridSize, colorCount]);
+    // 파일명에서 확장자 제거 (Native와 동일하게)
+    const fileName = imageUri.split('/').pop()?.split('.')[0] || '';
+    return `native_${fileName}_${gridSize}`;
+  }, [imageUri, gridSize]);
 
   // 폴드7 접힘/펼침 감지
   // 접힘: 884 x 2208 (가로)
