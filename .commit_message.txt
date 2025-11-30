@@ -1,1 +1,1 @@
-🔧 OOM 크래시 수정: Bitmap 메모리 해제 + 텍스쳐 캐시 제한 (30→15)
+🐛 지우기 카운트 버그 수정: stale closure 문제 해결 (wrongCells)

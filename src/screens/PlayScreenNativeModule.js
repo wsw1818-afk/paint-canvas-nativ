@@ -408,15 +408,17 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   }, [showDebugPanel]);
 
   // 셀 칠해짐 이벤트 핸들러 (⚡ 최적화: 불필요한 Set 재생성 방지)
+  // 🔧 버그 수정: wrongCells를 의존성에서 제거하고, setWrongCells의 함수형 업데이트로 현재값 참조
   const handleCellPainted = useCallback((event) => {
     const { row, col, correct } = event.nativeEvent;
     const cellKey = `${row}-${col}`;
 
     // 🔧 고치기 모드(undoMode)일 때는 X 제거 이벤트만 처리
     if (undoMode) {
-      if (correct && wrongCells.has(cellKey)) {
-        // ⚡ 배치 업데이트로 리렌더링 최소화
+      if (correct) {
+        // ⚡ 함수형 업데이트로 현재값 직접 참조 (stale closure 방지)
         setWrongCells(prev => {
+          if (!prev.has(cellKey)) return prev; // 없으면 변경 없음
           const newSet = new Set(prev);
           newSet.delete(cellKey);
           if (newSet.size === 0) {
@@ -425,6 +427,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           return newSet;
         });
         setFilledCells(prev => {
+          if (!prev.has(cellKey)) return prev;
           const newSet = new Set(prev);
           newSet.delete(cellKey);
           return newSet;
