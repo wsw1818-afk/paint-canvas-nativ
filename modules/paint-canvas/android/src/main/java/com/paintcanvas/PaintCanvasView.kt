@@ -1402,23 +1402,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var cachedTileScale = 0f
     private var lastCellSizeForTile = 0f
 
-    // 🎯 대형 그리드 임계값 (이 이상이면 텍스처 캐시 비활성화)
-    private val LARGE_GRID_THRESHOLD = 100  // 100×100 = 10,000 셀
-
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         try {
             // ✨ 완성 모드에 따라 다른 렌더링 적용
             if (completionMode == "ORIGINAL") {
                 // ORIGINAL 모드: 원본 이미지 영역 복사
                 drawOriginalImageCell(canvas, left, top, size)
-                return
-            }
-
-            // 🔧 OOM 방지: 대형 그리드(100×100 이상)에서는 단순 색상으로 그리기
-            // 텍스처 캐시가 메모리를 많이 사용하기 때문
-            if (gridSize >= LARGE_GRID_THRESHOLD) {
-                reusableBgPaint.color = color
-                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
             }
 
@@ -1500,8 +1489,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         val offsetY = (h - cropSize) / 2
         val cropped = Bitmap.createBitmap(pattern, offsetX, offsetY, cropSize, cropSize)
 
-        // ⚡ 성능: 128x128로 축소 (927,369 픽셀 → 16,384 픽셀 = 56배 빠름)
-        val targetSize = 128
+        // ⚡ 성능 + OOM 방지: 64x64로 축소 (메모리 4배 절약, 타일링이라 품질 유지)
+        val targetSize = 64
         val square = if (cropSize > targetSize) {
             Bitmap.createScaledBitmap(cropped, targetSize, targetSize, true).also {
                 if (cropped != pattern) cropped.recycle()  // 중간 비트맵 해제
