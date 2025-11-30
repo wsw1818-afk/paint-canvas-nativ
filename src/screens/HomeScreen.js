@@ -1,9 +1,25 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ImageBackground, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { migratePuzzles } from '../utils/puzzleStorage';
 
 export default function HomeScreen({ navigation }) {
+  // 앱 시작 시 기존 퍼즐 마이그레이션 (백그라운드 실행)
+  useEffect(() => {
+    const runMigration = async () => {
+      try {
+        const result = await migratePuzzles();
+        if (!result.alreadyDone && result.migrated > 0) {
+          console.log(`🔄 ${result.migrated}개 퍼즐 마이그레이션 완료`);
+        }
+      } catch (error) {
+        console.warn('마이그레이션 오류:', error);
+      }
+    };
+    runMigration();
+  }, []);
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />

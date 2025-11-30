@@ -578,36 +578,45 @@ function getAverageColor(pixels) {
 /**
  * 이미지를 색칠하기에 최적화하여 처리
  * 자동으로 대비, 채도, 선명도를 조절하여 색칠하기 좋은 이미지로 변환
- * @param {string} imageUri - 이미지 URI
+ * @param {string} imageUri - 이미지 URI (이미 최적화된 크기로 전달됨)
  * @param {number} gridSize - 격자 크기 (기본 85x85)
  * @param {number} colorCount - 사용할 색상 개수 (12, 24, 36)
+ * @param {number} preOptimizedSize - 이미 최적화된 이미지 크기 (있으면 리사이즈 스킵)
  * @returns {Object} - { uri, width, height, gridColors, dominantColors }
  */
-export async function processImage(imageUri, gridSize = 85, colorCount = 8) {
+export async function processImage(imageUri, gridSize = 85, colorCount = 8, preOptimizedSize = null) {
   try {
-    console.log('🎨 이미지 최적화 시작... colorCount:', colorCount);
+    console.log('🎨 이미지 처리 시작... colorCount:', colorCount);
 
-    // 1. 이미지를 1024x1024로 리사이즈 + 색칠하기 최적화 적용
-    const targetSize = 1024;
+    let targetSize;
+    let processUri = imageUri;
 
-    // expo-image-manipulator로 기본 처리 (리사이즈)
-    const resizedImage = await manipulateAsync(
-      imageUri,
-      [{ resize: { width: targetSize, height: targetSize } }],
-      { compress: 0.85, format: SaveFormat.JPEG, base64: false }
-    );
+    // ⚡ 최적화: 이미 최적화된 이미지면 리사이즈 스킵
+    if (preOptimizedSize) {
+      targetSize = preOptimizedSize;
+      console.log(`⚡ 이미 최적화된 이미지 사용: ${targetSize}px (리사이즈 스킵)`);
+    } else {
+      // 기존 퍼즐 호환성: preOptimizedSize가 없으면 기존 방식으로 리사이즈
+      targetSize = gridSize >= 100 ? 512 : 1024;
+      console.log(`📐 레거시 모드: ${targetSize}px로 리사이즈`);
 
-    console.log('📐 리사이즈 완료:', targetSize);
+      const resizedImage = await manipulateAsync(
+        imageUri,
+        [{ resize: { width: targetSize, height: targetSize } }],
+        { compress: 0.85, format: SaveFormat.JPEG, base64: false }
+      );
+      processUri = resizedImage.uri;
+    }
 
-    // 2. 픽셀 데이터 추출 및 최적화
-    const result = await extractGridColors(resizedImage.uri, gridSize, targetSize, colorCount);
+    // 픽셀 데이터 추출 및 색상 분석
+    const result = await extractGridColors(processUri, gridSize, targetSize, colorCount);
 
     console.log('✅ 이미지 처리 완료');
 
     return {
-      uri: resizedImage.uri,
-      width: resizedImage.width,
-      height: resizedImage.height,
+      uri: processUri,
+      width: targetSize,
+      height: targetSize,
       gridSize,
       colorCount,
       gridColors: result.gridColors || result,

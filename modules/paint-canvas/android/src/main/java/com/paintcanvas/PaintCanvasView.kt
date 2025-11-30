@@ -1371,10 +1371,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         return try {
             val uri = Uri.parse(uriString)
 
-            // 🔧 OOM 방지: 대형 그리드(100+)에서는 이미지 크기 제한
+            // ⚡ 최적화: GenerateScreen에서 이미 최적화된 이미지는 그대로 로드
+            // 기존 퍼즐(1024px) 호환성을 위해 런타임 체크는 유지
             val maxSize = if (gridSize >= 100) 512 else 1024
 
-            // 1단계: 이미지 크기만 먼저 확인
+            // 1단계: 이미지 크기 확인
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
@@ -1382,27 +1383,37 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 BitmapFactory.decodeStream(stream, null, options)
             }
 
-            // 2단계: 샘플링 비율 계산
-            val sampleSize = calculateInSampleSize(options.outWidth, options.outHeight, maxSize)
+            val originalWidth = options.outWidth
+            val originalHeight = options.outHeight
 
-            // 3단계: 샘플링된 이미지 로드
-            val loadOptions = BitmapFactory.Options().apply {
-                inSampleSize = sampleSize
-            }
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream, null, loadOptions)
-            }?.let { bitmap ->
-                // 최종 크기 조정 (maxSize 이하로)
-                if (bitmap.width > maxSize || bitmap.height > maxSize) {
-                    val scale = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
-                    val newWidth = (bitmap.width * scale).toInt()
-                    val newHeight = (bitmap.height * scale).toInt()
-                    val scaled = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
-                    if (scaled != bitmap) bitmap.recycle()
-                    android.util.Log.d("PaintCanvas", "🔧 이미지 축소: ${options.outWidth}x${options.outHeight} → ${newWidth}x${newHeight}")
-                    scaled
-                } else {
-                    bitmap
+            // ⚡ 이미 최적화된 이미지면 그대로 로드 (리사이즈 스킵)
+            if (originalWidth <= maxSize && originalHeight <= maxSize) {
+                android.util.Log.d("PaintCanvas", "⚡ 이미 최적화된 이미지: ${originalWidth}x${originalHeight} (리사이즈 스킵)")
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }
+            } else {
+                // 기존 퍼즐 호환: 큰 이미지는 런타임에 리사이즈
+                android.util.Log.d("PaintCanvas", "📐 레거시 이미지 리사이즈: ${originalWidth}x${originalHeight} → ${maxSize}px")
+
+                val sampleSize = calculateInSampleSize(originalWidth, originalHeight, maxSize)
+                val loadOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                }
+
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, loadOptions)
+                }?.let { bitmap ->
+                    if (bitmap.width > maxSize || bitmap.height > maxSize) {
+                        val scale = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+                        val newWidth = (bitmap.width * scale).toInt()
+                        val newHeight = (bitmap.height * scale).toInt()
+                        val scaled = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+                        if (scaled != bitmap) bitmap.recycle()
+                        scaled
+                    } else {
+                        bitmap
+                    }
                 }
             }
         } catch (e: Exception) {

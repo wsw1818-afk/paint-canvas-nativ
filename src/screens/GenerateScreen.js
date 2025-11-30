@@ -153,38 +153,64 @@ export default function GenerateScreen({ route, navigation }) {
 
       console.log('원본 이미지 URI:', selectedImage.uri);
 
-      // 1단계: 이미지를 1024x1024로 리사이즈 (5MB 제한 방지)
-      // JPEG 압축 사용으로 파일 크기 대폭 감소 (PNG 대비 90% 감소)
+      // ⚡ 최적화: gridSize 기반 이미지 크기 결정 (한 번만 리사이즈)
+      // - gridSize >= 100 (대형 그리드) → 512px (OOM 방지)
+      // - gridSize < 100 (소형 그리드) → 1024px (고화질 유지)
+      const optimizedSize = difficulty.gridSize >= 100 ? 512 : 1024;
+      const thumbnailSize = 200;  // 갤러리 목록용 썸네일
+
+      console.log(`📐 최적화 크기 결정: gridSize=${difficulty.gridSize} → ${optimizedSize}px`);
+
+      // 1단계: 최적화된 크기로 한 번만 리사이즈
       const resizedImage = await manipulateAsync(
         selectedImage.uri,
-        [{ resize: { width: 1024, height: 1024 } }],
-        { compress: 0.8, format: SaveFormat.JPEG, base64: false }  // JPEG 80% 품질
+        [{ resize: { width: optimizedSize, height: optimizedSize } }],
+        { compress: 0.8, format: SaveFormat.JPEG, base64: false }
       );
 
-      console.log('리사이즈 완료:', resizedImage.uri);
+      console.log('✅ 리사이즈 완료:', resizedImage.uri);
 
-      // 2단계: 리사이즈된 이미지를 영구 저장소에 복사
+      // 2단계: 썸네일 생성 (갤러리 목록용)
+      const thumbnailImage = await manipulateAsync(
+        selectedImage.uri,
+        [{ resize: { width: thumbnailSize, height: thumbnailSize } }],
+        { compress: 0.7, format: SaveFormat.JPEG, base64: false }
+      );
+
+      console.log('✅ 썸네일 생성 완료:', thumbnailImage.uri);
+
+      // 3단계: 파일 저장 (최적화 이미지 + 썸네일)
       const timestamp = Date.now();
-      const fileName = `puzzle_${timestamp}.jpg`;  // JPEG 확장자로 변경
+      const fileName = `puzzle_${timestamp}.jpg`;
+      const thumbnailFileName = `puzzle_${timestamp}_thumb.jpg`;
       const permanentUri = `${FileSystem.documentDirectory}${fileName}`;
+      const thumbnailUri = `${FileSystem.documentDirectory}${thumbnailFileName}`;
 
       await FileSystem.copyAsync({
         from: resizedImage.uri,
         to: permanentUri
       });
 
-      console.log('이미지 파일로 저장 완료:', permanentUri);
+      await FileSystem.copyAsync({
+        from: thumbnailImage.uri,
+        to: thumbnailUri
+      });
 
-      // 3단계: 이미지를 격자로 처리하여 색상 추출
+      console.log('✅ 파일 저장 완료:', permanentUri);
+      console.log('✅ 썸네일 저장 완료:', thumbnailUri);
+
+      // 4단계: 이미지를 격자로 처리하여 색상 추출
+      // ⚡ imageProcessor에 이미 최적화된 이미지 전달 (중복 리사이즈 방지)
       const processedImage = await processImage(
-        permanentUri,  // 저장된 파일 경로 사용
-        difficulty.gridSize,  // 난이도별 격자 크기 (쉬움: 140, 보통: 160, 어려움: 220)
-        difficulty.colors
+        permanentUri,
+        difficulty.gridSize,
+        difficulty.colors,
+        optimizedSize  // 이미 최적화된 크기 전달
       );
 
-      console.log('이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
+      console.log('✅ 이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
 
-      // 4단계: WEAVE 모드 선택 시 위빙 텍스처 미리보기 이미지 생성
+      // 5단계: WEAVE 모드 선택 시 위빙 텍스처 미리보기 이미지 생성
       let weavePreviewUri = null;
       if (completionMode === 'WEAVE' && processedImage.dominantColors && processedImage.gridColors) {
         console.log('🧶 위빙 텍스처 미리보기 이미지 생성 중...');
@@ -203,14 +229,17 @@ export default function GenerateScreen({ route, navigation }) {
 
       const puzzleData = {
         title: `퍼즐 ${new Date().toLocaleString('ko-KR')}`,
-        imageUri: permanentUri,  // file:// URI로 저장
+        imageUri: permanentUri,  // 최적화된 이미지 URI
+        thumbnailUri: thumbnailUri,  // 썸네일 이미지 URI (갤러리 목록용)
         weavePreviewUri: weavePreviewUri,  // 위빙 텍스처 미리보기 이미지 (WEAVE 모드 전용)
         colorCount: difficulty.colors,
-        gridSize: difficulty.gridSize,  // 난이도별 격자 크기
+        gridSize: difficulty.gridSize,
         difficulty: selectedDifficulty,
-        completionMode: completionMode,  // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
-        gridColors: processedImage.gridColors,  // 격자별 색상 매핑 데이터
-        dominantColors: processedImage.dominantColors,  // 추출된 주요 색상
+        completionMode: completionMode,
+        gridColors: processedImage.gridColors,
+        dominantColors: processedImage.dominantColors,
+        optimizedSize: optimizedSize,  // 최적화된 이미지 크기 기록
+        optimizedAt: Date.now(),  // 최적화 시점 기록 (마이그레이션 체크용)
       };
 
       await savePuzzle(puzzleData);

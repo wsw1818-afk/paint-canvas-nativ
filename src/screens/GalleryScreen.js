@@ -135,12 +135,13 @@ export default function GalleryScreen({ navigation }) {
               ? { icon: '🖼️', name: '원본 이미지', color: '#FF6B6B' }
               : { icon: '🧶', name: '위빙 텍스처', color: '#9B59B6' };
 
-            // 썸네일 이미지 우선순위 (단순화):
-            // 1. 진행 썸네일 (원본 이미지 위에 색칠된 부분 오버레이)
-            // 2. 원본 이미지 (아직 색칠 안 한 경우)
+            // 썸네일 이미지 우선순위:
+            // 1. 진행 썸네일 (색칠 진행 중인 상태)
+            // 2. 최적화된 썸네일 (새로 생성된 퍼즐)
+            // 3. 원본 이미지 (기존 퍼즐 하위 호환)
             const thumbnailUri = puzzle.progressThumbnailUri
               ? puzzle.progressThumbnailUri
-              : (puzzle.imageUri || puzzle.imageBase64);
+              : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
 
             return (
               <View key={puzzle.id} style={styles.puzzleCard}>
