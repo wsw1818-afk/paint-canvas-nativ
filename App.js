@@ -30,7 +30,7 @@ export default function App() {
       case 'Play':
         return <PlayScreenNativeModule navigation={navigation} route={{ params }} />;
       case 'Gallery':
-        return <GalleryScreen navigation={navigation} />;
+        return <GalleryScreen key={Date.now()} navigation={navigation} />;
       default:
         return <HomeScreen navigation={navigation} />;
     }

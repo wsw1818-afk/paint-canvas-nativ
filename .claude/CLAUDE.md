@@ -1,5 +1,25 @@
 # ColorPlayExpo 개발 가이드라인
 
+## Git 저장소 정보
+
+**전용 저장소**: https://github.com/wsw1818-afk/paint-canvas-nativ
+
+- 이 저장소는 **ColorPlayExpo (색칠앱) 전용**입니다
+- 다른 프로젝트와 공유하지 않음
+- 커밋/푸시 시 항상 이 저장소로 진행
+
+```bash
+# 원격 저장소 확인
+git remote -v
+# origin  https://github.com/wsw1818-afk/paint-canvas-nativ.git (fetch)
+# origin  https://github.com/wsw1818-afk/paint-canvas-nativ.git (push)
+
+# 만약 다른 저장소로 설정되어 있다면 변경
+git remote set-url origin https://github.com/wsw1818-afk/paint-canvas-nativ.git
+```
+
+---
+
 ## 패키지 설치 워크플로우 (중요)
 
 ### Expo 패키지 추가 시 필수 절차
@@ -212,3 +232,4 @@ pause
 ## 마지막 업데이트
 2025-11-27: expo-linear-gradient 추가 시 CMake codegen 에러 해결법 추가
 2025-11-29: 코드 수정 후 빌드 필요 여부 안내 지침 추가
+2025-11-30: Git 전용 저장소 정보 추가 (paint-canvas-nativ)

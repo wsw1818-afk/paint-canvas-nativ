@@ -28,6 +28,29 @@ data class CellData(
 
 class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
     private val onCellPainted by EventDispatcher()
+    private val onCanvasReady by EventDispatcher()
+
+    // 🚀 초기화 완료 상태 추적
+    private var isImageLoaded = false
+    private var isProgressLoaded = false
+    private var hasNotifiedReady = false
+
+    /**
+     * 🚀 첫 번째 성공적인 렌더링 완료 시 JS에 알림
+     * onDraw에서 실제 캔버스가 그려진 후 호출됨
+     */
+    private fun notifyCanvasReady() {
+        if (!hasNotifiedReady) {
+            hasNotifiedReady = true
+            android.util.Log.d("PaintCanvas", "🚀 Canvas Ready! 첫 렌더링 완료")
+            onCanvasReady(mapOf(
+                "ready" to true,
+                "filledCells" to filledCells.size,
+                "wrongCells" to wrongPaintedCells.size
+            ))
+        }
+    }
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         isFilterBitmap = true  // 비트맵 스케일링 품질 향상
     }
@@ -183,6 +206,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         android.util.Log.d("PaintCanvas", "🔄 setCells: 새 퍼즐 로드, 상태 초기화 (old=$lastCellsSize, new=$size)")
         lastCellsSize = size
         hasUserPainted = false  // ✅ 새 퍼즐이면 사용자 색칠 플래그 리셋
+        // 🚀 초기화 상태 플래그 리셋 (새 퍼즐이므로 다시 로딩 필요)
+        isImageLoaded = false
+        isProgressLoaded = false
+        hasNotifiedReady = false
         filledCells.clear()
         filledCellIndices.clear()
         wrongPaintedCells.clear()
@@ -223,6 +250,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         cells = newCells
         pendingCellList = null
 
+        // ⚡ 최적화: 셀 데이터 로드 후 선택된 라벨 캐시 재구축
+        rebuildSelectedLabelCache()
+
         android.util.Log.d("PaintCanvas", "📦 setCells: ${size}개, ${System.currentTimeMillis() - startTime}ms")
 
         // 🔄 저장된 진행 상황 복원 (setFilledCells/setWrongCells가 먼저 호출된 경우)
@@ -259,6 +289,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // ⚡ 파싱된 색상 캐시 (매번 Color.parseColor 호출 방지)
     private var cachedSelectedColorInt: Int = Color.RED
 
+    // ⚡ 최적화: 선택된 라벨의 셀 인덱스 캐시 (onDraw에서 매 프레임 HashMap 조회 제거)
+    private var selectedLabelIndicesCache: Set<Int>? = null
+
     fun setSelectedColor(colorHex: String) {
         if (selectedColorHex == colorHex) return  // ⚡ 변경 없으면 스킵
         selectedColorHex = colorHex
@@ -269,9 +302,19 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     fun setSelectedLabel(label: String) {
         if (selectedLabel == label) return  // ⚡ 변경 없으면 스킵
         selectedLabel = label
-        // ⚡ 최적화: 색상 선택 시 즉시 다시 그리기 (하이라이트 업데이트 필요)
+        // ⚡ 최적화: 선택된 라벨의 셀 인덱스 미리 계산 (onDraw 성능 향상)
+        rebuildSelectedLabelCache()
         // postInvalidate()는 다음 프레임에 그리기를 예약 (UI 스레드 블록 방지)
         postInvalidate()
+    }
+
+    /**
+     * ⚡ 선택된 라벨의 셀 인덱스 캐시 재구축
+     * onDraw에서 매 프레임 labelMapByIndex 조회 → 캐시된 Set.contains() 조회로 변경
+     */
+    private fun rebuildSelectedLabelCache() {
+        val label = selectedLabel
+        selectedLabelIndicesCache = labelMapByIndex.filterValues { it == label }.keys.toHashSet()
     }
 
     fun setEraseMode(enabled: Boolean) {
@@ -398,25 +441,38 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val loadTime = System.currentTimeMillis() - startTime
                 android.util.Log.d("PaintCanvas", "⚡ 비동기 이미지 로드 완료: ${loadTime}ms")
 
-                // 3. 메인 스레드에서 UI 업데이트
+                // 3. parsedColorMap 업데이트 (백그라운드에서 계속)
+                // ⚡ 최적화: 메인 스레드 블로킹 방지
+                val localCells = cells.toList()  // 스냅샷 복사
+                val localGridSize = gridSize
+                val tempColorMap = HashMap<Int, Int>()
+
+                if (loadedBitmap != null && !loadedBitmap.isRecycled && localCells.isNotEmpty()) {
+                    val bw = loadedBitmap.width
+                    val bh = loadedBitmap.height
+                    for (cell in localCells) {
+                        val cellIndex = cell.row * localGridSize + cell.col
+                        // getOriginalPixelColor 로직 인라인 (백그라운드 호환)
+                        val srcX = (cell.col * bw / localGridSize + bw / localGridSize / 2).coerceIn(0, bw - 1)
+                        val srcY = (cell.row * bh / localGridSize + bh / localGridSize / 2).coerceIn(0, bh - 1)
+                        tempColorMap[cellIndex] = loadedBitmap.getPixel(srcX, srcY)
+                    }
+                    android.util.Log.d("PaintCanvas", "✨ parsedColorMap 준비 완료 (백그라운드): ${localCells.size}개 셀")
+                }
+
+                // 4. 메인 스레드에서 UI 업데이트
                 withContext(Dispatchers.Main) {
                     try {
                         originalBitmap = loadedBitmap
                         backgroundBitmap = texturedBitmap
 
-                        // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
-                        val bg = backgroundBitmap
-                        if (bg != null && !bg.isRecycled && cells.isNotEmpty()) {
-                            for (cell in cells) {
-                                val cellIndex = cell.row * gridSize + cell.col
-                                parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
-                            }
-                            android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
-                        }
+                        // ⚡ 미리 계산된 colorMap 적용 (단순 대입)
+                        parsedColorMap.putAll(tempColorMap)
 
                         isImageLoading = false
+                        isImageLoaded = true  // 🚀 이미지 로딩 완료 플래그
                         android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
-                        invalidate()
+                        invalidate()  // onDraw에서 notifyCanvasReady 호출
                     } catch (e: Exception) {
                         android.util.Log.e("PaintCanvas", "❌ UI 업데이트 오류: ${e.message}")
                         isImageLoading = false
@@ -989,13 +1045,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
                     // ⚡ 텍스트와 하이라이트는 확대 시에만 (성능 최적화)
                     if (shouldDrawText) {
-                        // 선택된 라벨 하이라이트 (노란색 반투명)
-                        val label = labelMapByIndex[cellIndex]
-                        if (label == selectedLabel) {
+                        // ⚡ 최적화: 캐시된 인덱스 Set으로 하이라이트 체크 (HashMap 조회 제거)
+                        val isHighlighted = selectedLabelIndicesCache?.contains(cellIndex) == true
+                        if (isHighlighted) {
                             canvas.drawRect(left, top, left + cellSizePlusHalf, top + cellSizePlusHalf, highlightPaint)
                         }
 
-                        // 알파벳
+                        // 알파벳 - labelMapByIndex는 여전히 조회 필요 (라벨 텍스트 표시용)
+                        val label = labelMapByIndex[cellIndex]
                         canvas.drawText(label ?: "A", left + halfCellSize, top + halfCellSize + textYOffset, textPaint)
                     }
                 }
@@ -1013,6 +1070,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이렇게 해야 흰색 배경이 먼저 그려지지 않음
 
         canvas.restore()
+
+        // 🚀 첫 번째 성공적인 렌더링 완료 시 JS에 알림
+        notifyCanvasReady()
+
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ onDraw 오류: ${e.message}")
         }
@@ -1575,7 +1636,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             // scaleFactor / maxZoom = 현재 줌 비율 (0.0 ~ 1.0)
             // 예: maxZoom=10, scaleFactor=8 → 80% 줌
             val zoomRatio = scaleFactor / maxZoom
-            val shouldShowTexture = zoomRatio >= TEXTURE_VISIBLE_ZOOM_THRESHOLD
+
+            // ⚡ 대형 그리드(>=100) 추가 최적화: 40% 줌 미만에서 텍스처 완전 스킵
+            // 100+ 그리드는 셀이 매우 작아서 텍스처가 거의 안 보임 → 렌더링 낭비 방지
+            val textureThreshold = if (isLargeGridMode) 0.4f else TEXTURE_VISIBLE_ZOOM_THRESHOLD
+            val shouldShowTexture = zoomRatio >= textureThreshold
 
             // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
             val pattern = filledCellPatternBitmap
@@ -2307,92 +2372,186 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * SharedPreferences에서 저장된 진행 상황 복원
      */
     private fun loadProgressFromPrefs() {
-        val gameId = currentGameId ?: return
+        val gameId = currentGameId ?: run {
+            // gameId가 없으면 완료 처리 (onDraw에서 notifyCanvasReady 호출)
+            isProgressLoaded = true
+            return
+        }
 
-        try {
-            val json = prefs.getString(gameId, null) ?: return
-            val data = JSONObject(json)
-
-            val filledArray = data.optJSONArray("filledCells") ?: return
-            val wrongArray = data.optJSONArray("wrongCells")
-            val colorMapObj = data.optJSONObject("paintedColors")  // 색상 정보
-
-            // 기존 데이터 클리어
-            filledCells.clear()
-            filledCellIndices.clear()
-            wrongPaintedCells.clear()
-            wrongCellIndices.clear()
-            paintedColorMapInt.clear()
-            paintedColorMap.clear()
-
-            // filledCells 복원
-            for (i in 0 until filledArray.length()) {
-                val cellKey = filledArray.getString(i)
-                filledCells.add(cellKey)
-                val idx = parseIndex(cellKey)
-                if (idx >= 0) {
-                    filledCellIndices.add(idx)
-
-                    // 🎨 색상 복원: 저장된 색상이 있으면 사용, 없으면 정답 색상 사용
-                    val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
-                    if (savedColor != 0) {
-                        paintedColorMapInt[idx] = savedColor
-                        paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
-                    } else if (parsedColorMap.containsKey(idx)) {
-                        // 정답 색상으로 폴백 (정답으로 칠한 셀)
-                        val correctColor = parsedColorMap[idx] ?: Color.WHITE
-                        paintedColorMapInt[idx] = correctColor
-                        paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and correctColor)
+        // ⚡ 비동기 로딩으로 메인 스레드 블로킹 방지
+        imageLoadScope.launch {
+            try {
+                val json = prefs.getString(gameId, null)
+                if (json == null) {
+                    // 저장된 데이터가 없으면 (새 퍼즐) 완료 처리
+                    withContext(Dispatchers.Main) {
+                        isProgressLoaded = true
+                        android.util.Log.d("PaintCanvas", "🆕 새 퍼즐, 진행 상황 없음")
+                        invalidate()  // onDraw 트리거
                     }
+                    return@launch
                 }
-            }
+                val data = JSONObject(json)
 
-            // wrongCells 복원
-            if (wrongArray != null) {
-                for (i in 0 until wrongArray.length()) {
-                    val cellKey = wrongArray.getString(i)
-                    wrongPaintedCells.add(cellKey)
-                    val idx = parseIndex(cellKey)
-                    if (idx >= 0) {
-                        wrongCellIndices.add(idx)
+                val filledArray = data.optJSONArray("filledCells")
+                if (filledArray == null) {
+                    // 저장 형식이 잘못됐거나 빈 경우 완료 처리
+                    withContext(Dispatchers.Main) {
+                        isProgressLoaded = true
+                        invalidate()  // onDraw 트리거
+                    }
+                    return@launch
+                }
+                val wrongArray = data.optJSONArray("wrongCells")
+                val colorMapObj = data.optJSONObject("paintedColors")
 
-                        // 잘못된 셀도 색상 복원
+                // 백그라운드에서 데이터 파싱
+                val localGridSize = gridSize
+                val tempFilledCells = HashSet<String>()
+                val tempFilledIndices = HashSet<Int>()
+                val tempWrongCells = HashSet<String>()
+                val tempWrongIndices = HashSet<Int>()
+                val tempColorMapInt = HashMap<Int, Int>()
+                val tempColorMap = HashMap<String, String>()
+
+                // 현재 parsedColorMap 스냅샷 (백그라운드에서 읽기)
+                val currentParsedColors = HashMap(parsedColorMap)
+
+                // filledCells 파싱
+                for (i in 0 until filledArray.length()) {
+                    val cellKey = filledArray.getString(i)
+                    tempFilledCells.add(cellKey)
+                    val parts = cellKey.split("-")
+                    if (parts.size == 2) {
+                        val row = parts[0].toIntOrNull() ?: continue
+                        val col = parts[1].toIntOrNull() ?: continue
+                        val idx = row * localGridSize + col
+                        tempFilledIndices.add(idx)
+
                         val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
                         if (savedColor != 0) {
-                            paintedColorMapInt[idx] = savedColor
-                            paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                            tempColorMapInt[idx] = savedColor
+                            tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                        } else {
+                            val correctColor = currentParsedColors[idx] ?: Color.WHITE
+                            tempColorMapInt[idx] = correctColor
+                            tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and correctColor)
                         }
                     }
                 }
+
+                // wrongCells 파싱
+                if (wrongArray != null) {
+                    for (i in 0 until wrongArray.length()) {
+                        val cellKey = wrongArray.getString(i)
+                        tempWrongCells.add(cellKey)
+                        val parts = cellKey.split("-")
+                        if (parts.size == 2) {
+                            val row = parts[0].toIntOrNull() ?: continue
+                            val col = parts[1].toIntOrNull() ?: continue
+                            val idx = row * localGridSize + col
+                            tempWrongIndices.add(idx)
+
+                            val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
+                            if (savedColor != 0) {
+                                tempColorMapInt[idx] = savedColor
+                                tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                            }
+                        }
+                    }
+                }
+
+                android.util.Log.d("PaintCanvas", "✅ 진행 상황 파싱 완료 (백그라운드): filled=${tempFilledCells.size}, wrong=${tempWrongCells.size}")
+
+                // 메인 스레드에서 UI 업데이트 (빠른 대입만)
+                withContext(Dispatchers.Main) {
+                    filledCells.clear()
+                    filledCells.addAll(tempFilledCells)
+                    filledCellIndices.clear()
+                    filledCellIndices.addAll(tempFilledIndices)
+                    wrongPaintedCells.clear()
+                    wrongPaintedCells.addAll(tempWrongCells)
+                    wrongCellIndices.clear()
+                    wrongCellIndices.addAll(tempWrongIndices)
+                    paintedColorMapInt.clear()
+                    paintedColorMapInt.putAll(tempColorMapInt)
+                    paintedColorMap.clear()
+                    paintedColorMap.putAll(tempColorMap)
+
+                    if (filledCells.isNotEmpty()) {
+                        hasUserPainted = true
+                    }
+
+                    isProgressLoaded = true  // 🚀 진행 상황 로딩 완료 플래그
+                    android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원 완료: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
+                    invalidate()  // onDraw에서 notifyCanvasReady 호출
+                }
+
+            } catch (e: Exception) {
+                android.util.Log.e("PaintCanvas", "❌ 진행 상황 복원 실패: ${e.message}")
+                // 실패해도 로딩 완료 처리 (빈 상태로 시작)
+                withContext(Dispatchers.Main) {
+                    isProgressLoaded = true
+                    invalidate()  // onDraw 트리거
+                }
             }
-
-            // 복원 완료 시 hasUserPainted 플래그 설정 (JS 업데이트 무시)
-            if (filledCells.isNotEmpty()) {
-                hasUserPainted = true
-            }
-
-            android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}, colors=${paintedColorMapInt.size}")
-            invalidate()
-
-        } catch (e: Exception) {
-            android.util.Log.e("PaintCanvas", "❌ 진행 상황 복원 실패: ${e.message}")
         }
     }
 
     /**
-     * 진행 상황을 SharedPreferences에 저장 (즉시 저장)
-     * ⚠️ 앱 종료 시 저장 유실 방지를 위해 디바운스 제거
+     * ⚡ 진행 상황을 SharedPreferences에 비동기 저장 (UI 블로킹 방지)
+     * 일반 색칠 중에는 apply()로 비동기 저장
      */
     private fun saveProgressToPrefs() {
+        val gameId = currentGameId ?: return
+        if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
+
         try {
-            saveProgressToPrefsSync()
+            val data = buildSaveData()
+            // ⚡ apply() 사용: 비동기 저장으로 UI 스레드 블로킹 방지
+            prefs.edit().putString(gameId, data.toString()).apply()
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ saveProgressToPrefs 오류: ${e.message}")
         }
     }
 
     /**
+     * 저장용 JSON 데이터 생성 (공통 로직)
+     */
+    private fun buildSaveData(): JSONObject {
+        val filledArray = JSONArray(filledCells.toList())
+        val wrongArray = JSONArray(wrongPaintedCells.toList())
+
+        // 🎨 색상 정보 저장 (cellKey -> colorInt)
+        val colorMapObj = JSONObject()
+        for (cellKey in filledCells) {
+            val idx = parseIndex(cellKey)
+            if (idx >= 0) {
+                paintedColorMapInt[idx]?.let { color ->
+                    colorMapObj.put(cellKey, color)
+                }
+            }
+        }
+        for (cellKey in wrongPaintedCells) {
+            val idx = parseIndex(cellKey)
+            if (idx >= 0) {
+                paintedColorMapInt[idx]?.let { color ->
+                    colorMapObj.put(cellKey, color)
+                }
+            }
+        }
+
+        return JSONObject().apply {
+            put("filledCells", filledArray)
+            put("wrongCells", wrongArray)
+            put("paintedColors", colorMapObj)
+            put("timestamp", System.currentTimeMillis())
+        }
+    }
+
+    /**
      * 진행 상황을 동기적으로 저장 (뷰 분리 시 사용)
+     * ⚠️ commit() 사용: 앱 종료 시에도 확실히 저장
      * 🎨 색상 정보도 함께 저장하여 복원 시 정확한 색상 표시
      */
     private fun saveProgressToPrefsSync() {
@@ -2400,39 +2559,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
 
         try {
-            val filledArray = JSONArray(filledCells.toList())
-            val wrongArray = JSONArray(wrongPaintedCells.toList())
-
-            // 🎨 색상 정보 저장 (cellKey -> colorInt)
-            val colorMapObj = JSONObject()
-            for (cellKey in filledCells) {
-                val idx = parseIndex(cellKey)
-                if (idx >= 0) {
-                    paintedColorMapInt[idx]?.let { color ->
-                        colorMapObj.put(cellKey, color)
-                    }
-                }
-            }
-            for (cellKey in wrongPaintedCells) {
-                val idx = parseIndex(cellKey)
-                if (idx >= 0) {
-                    paintedColorMapInt[idx]?.let { color ->
-                        colorMapObj.put(cellKey, color)
-                    }
-                }
-            }
-
-            val data = JSONObject().apply {
-                put("filledCells", filledArray)
-                put("wrongCells", wrongArray)
-                put("paintedColors", colorMapObj)  // 색상 정보 추가
-                put("timestamp", System.currentTimeMillis())
-            }
+            val data = buildSaveData()
 
             // ⚠️ commit() 사용: 동기 저장으로 앱 종료 시에도 확실히 저장
             val success = prefs.edit().putString(gameId, data.toString()).commit()
             if (success) {
-                android.util.Log.d("PaintCanvas", "💾 진행 상황 저장 완료: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size}, colors=${colorMapObj.length()})")
+                android.util.Log.d("PaintCanvas", "💾 진행 상황 동기 저장 완료: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size})")
             } else {
                 android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: commit() returned false")
             }

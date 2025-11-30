@@ -48,6 +48,11 @@ class PaintCanvasModule : Module() {
         view.setImageUri(uri)
       }
 
+      // 🔄 저장/복원용 고유 ID (puzzleId 기반)
+      Prop("gameId") { view: PaintCanvasView, gameId: String ->
+        view.setGameId(gameId)
+      }
+
       Prop("filledCells") { view: PaintCanvasView, cells: List<String> ->
         view.setFilledCells(cells)
       }
@@ -74,7 +79,7 @@ class PaintCanvasModule : Module() {
         view.setCompletionMode(mode)
       }
 
-      Events("onCellPainted")
+      Events("onCellPainted", "onCanvasReady")
     }
   }
 }

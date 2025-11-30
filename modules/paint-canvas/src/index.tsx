@@ -18,6 +18,7 @@ export interface PaintCanvasProps extends ViewProps {
   cells: PaintCanvasCell[];
   selectedColorHex: string;
   imageUri: string;
+  gameId?: string;  // 🔄 저장/복원용 고유 ID (puzzleId 기반)
   onCellPainted?: (event: PaintCanvasPaintedEvent) => void;
 }
 

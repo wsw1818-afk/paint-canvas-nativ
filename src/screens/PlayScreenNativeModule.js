@@ -273,6 +273,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
   // 저장된 진행 상황 불러오기
   const [isCanvasReady, setIsCanvasReady] = useState(false);
+  // 🚀 Native 캔버스 초기화 완료 상태 (이미지 + 진행상황 로딩)
+  const [isNativeReady, setIsNativeReady] = useState(false);
 
   useEffect(() => {
     const loadProgress = async () => {
@@ -444,6 +446,13 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       saveProgress();
     }
   }, [filledCells.size, isCanvasReady, saveProgress]);
+
+  // 🚀 Native 캔버스 초기화 완료 핸들러
+  const handleCanvasReady = useCallback((event) => {
+    const { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells } = event.nativeEvent;
+    console.log('[PlayScreen] 🚀 Native Canvas Ready:', { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells });
+    setIsNativeReady(true);
+  }, []);
 
   // 🔍 디버그 로그 핸들러 (성능 최적화: 디버그 패널 열릴 때만 활성화)
   const handleDebugLog = useCallback((event) => {
@@ -675,6 +684,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               viewSize={viewDimensions}
               completionMode={completionMode}
               onCellPainted={handleCellPainted}
+              onCanvasReady={handleCanvasReady}
               onDebugLog={handleDebugLog}
             />
           </View>
@@ -765,6 +775,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             viewSize={viewDimensions}
             completionMode={completionMode}
             onCellPainted={handleCellPainted}
+            onCanvasReady={handleCanvasReady}
             onDebugLog={handleDebugLog}
           />
         )}
@@ -773,13 +784,13 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       {/* 색상 팔레트 */}
       {renderPalette()}
 
-      {/* 로딩 오버레이 - 셀과 진행상황 모두 준비될 때까지 표시 */}
-      {(!isCanvasReady || !isCellsReady) && (
+      {/* 🚀 로딩 오버레이 - Native 캔버스의 첫 렌더링 완료까지 표시 */}
+      {!isNativeReady && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#40E0D0" />
             <Text style={styles.loadingText}>
-              {!isCellsReady ? '퍼즐 생성 중...' : '불러오는 중...'}
+              {!isCellsReady ? '퍼즐 생성 중...' : '캔버스 준비 중...'}
             </Text>
           </View>
         </View>

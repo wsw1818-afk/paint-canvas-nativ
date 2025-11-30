@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, StatusBar, Alert } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, StatusBar, Alert, InteractionManager, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage';
@@ -8,16 +8,33 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);  // 화면 전환 완료 여부
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  // 🔄 화면 진입 시 퍼즐 목록 로드 (key={Date.now()}로 매번 재마운트됨)
+  // 🚀 화면 전환 애니메이션 완료 후 데이터 로딩 (초기 지연 해결)
   useEffect(() => {
-    loadSavedPuzzles();
+    // 즉시 ready 상태로 전환하여 UI 먼저 표시
+    setReady(true);
+
+    // 화면 전환 애니메이션 완료 후 데이터 로딩
+    const interactionPromise = InteractionManager.runAfterInteractions(() => {
+      loadSavedPuzzles();
+    });
+
+    return () => interactionPromise.cancel();
   }, []);
 
   const loadSavedPuzzles = async () => {
     try {
       const savedPuzzles = await loadPuzzles();
       setPuzzles(savedPuzzles);
+
+      // 데이터 로드 완료 후 페이드인 애니메이션
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
     } catch (error) {
       console.error('퍼즐 로드 실패:', error);
     } finally {
@@ -118,9 +135,22 @@ export default function GalleryScreen({ navigation }) {
           {/* Puzzle List */}
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#FFFFFF" />
-            <Text style={styles.loadingText}>불러오는 중...</Text>
+          // 🎯 스켈레톤 플레이스홀더 - 즉각적인 UI 반응
+          <View>
+            {[1, 2, 3].map((i) => (
+              <View key={i} style={styles.skeletonCard}>
+                <View style={styles.skeletonImage} />
+                <View style={styles.skeletonInfo}>
+                  <View style={styles.skeletonTitle} />
+                  <View style={styles.skeletonSubtext} />
+                  <View style={styles.skeletonProgress} />
+                </View>
+              </View>
+            ))}
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+              <Text style={styles.loadingText}>불러오는 중...</Text>
+            </View>
           </View>
         ) : puzzles.length === 0 ? (
           <View style={styles.emptyContainer}>
@@ -129,7 +159,8 @@ export default function GalleryScreen({ navigation }) {
             <Text style={styles.emptyDesc}>격자 적용된 퍼즐에서 작업을 완료하면 여기에 저장됩니다</Text>
           </View>
         ) : (
-          puzzles.map((puzzle) => {
+          <Animated.View style={{ opacity: fadeAnim }}>
+          {puzzles.map((puzzle) => {
             const difficultyInfo = getDifficultyInfo(puzzle.colorCount || 12, puzzle.gridSize || 120);
             const completionMode = puzzle.completionMode || 'ORIGINAL';
             const modeInfo = completionMode === 'ORIGINAL'
@@ -202,7 +233,8 @@ export default function GalleryScreen({ navigation }) {
                 </View>
               </View>
             );
-          })
+          })}
+          </Animated.View>
         )}
           </ScrollView>
         </SafeAreaView>
@@ -393,5 +425,50 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#2C3E50',
+  },
+  // 🎯 스켈레톤 로딩 스타일
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderRadius: 20,
+    padding: 12,
+  },
+  skeletonImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  skeletonInfo: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  skeletonTitle: {
+    width: '70%',
+    height: 18,
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    borderRadius: 4,
+    marginBottom: 12,
+  },
+  skeletonSubtext: {
+    width: '50%',
+    height: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.06)',
+    borderRadius: 4,
+    marginBottom: 12,
+  },
+  skeletonProgress: {
+    width: '40%',
+    height: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    borderRadius: 4,
+  },
+  loadingOverlay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
   },
 });
