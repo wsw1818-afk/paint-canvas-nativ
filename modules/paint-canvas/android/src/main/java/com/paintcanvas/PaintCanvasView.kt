@@ -1167,6 +1167,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // Check if label matches selected label
         val cellLabel = labelMapByIndex[cellIndex]
+
+        // ⚠️ 라벨 맵에 없는 셀은 색칠 불가 (데이터 로드 전 또는 유효하지 않은 셀)
+        if (cellLabel == null) {
+            android.util.Log.w("PaintCanvas", "⚠️ 셀($row, $col) 라벨 없음 - 색칠 스킵")
+            return
+        }
+
         val isCorrect = cellLabel == selectedLabel
 
         // ⚡ 캐시된 색상 사용 (Color.parseColor 호출 제거)
@@ -1195,8 +1202,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             queuePaintEventWithColor(row, col, false, parsedSelectedColor)
         }
 
-        // 🔄 자동 저장 (디바운스 적용)
-        saveProgressToPrefs()
+        // 🔄 저장은 flushPendingEventsWithColor에서 배치로 처리 (매 셀마다 호출 제거)
     }
 
     // ⚡ 색상 정보 포함 이벤트 큐잉 (String 생성 지연)
@@ -1236,6 +1242,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             sendCellPaintedEvent(event.row, event.col, event.isCorrect)
         }
         pendingPaintEventsWithColor.clear()
+
+        // 🔄 배치 처리 완료 후 한 번만 저장 (디바운스 적용)
+        saveProgressToPrefs()
     }
 
     // ⚡ JS 이벤트만 큐에 추가 (invalidate는 handlePainting에서 한 번만)
@@ -1321,13 +1330,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
-    // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
-    private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
+    // 색칠된 셀 텍스처 캐시 (색상별로 캐싱) - 최대 50개로 제한하여 메모리 관리
+    private val filledCellTextureCache = object : LinkedHashMap<Int, Bitmap>(50, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Bitmap>?): Boolean {
+            if (size > 50) {
+                eldest?.value?.recycle()  // 오래된 비트맵 해제
+                tiledShaderCache.remove(eldest?.key)  // 연관된 셰이더도 제거
+                return true
+            }
+            return false
+        }
+    }
 
     private var textureDebugLogged = false
 
-    // 🎨 타일링용 BitmapShader 캐시 (색상별)
-    private val tiledShaderCache = mutableMapOf<Int, BitmapShader>()
+    // 🎨 타일링용 BitmapShader 캐시 (색상별) - 최대 50개
+    private val tiledShaderCache = LinkedHashMap<Int, BitmapShader>(50, 0.75f, true)
     private val tiledPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val shaderMatrix = Matrix()
 
