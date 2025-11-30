@@ -12,8 +12,7 @@ import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 const DIFFICULTIES = [
   { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: '#4CD964' },      // 120×120 = 14,400 셀, 16색
   { id: 'NORMAL', name: '보통 (균형잡힌)', colors: 36, gridSize: 160, color: '#5AB9EA' },   // 160×160 = 25,600 셀, 36색
-  { id: 'HARD', name: '어려움 (사진처럼)', colors: 64, gridSize: 200, color: '#FF5757' },   // 200×200 = 40,000 셀, 64색
-  { id: 'ULTRA', name: '초고화질 (실사)', colors: 96, gridSize: 250, color: '#9B59B6' },  // 250×250 = 62,500 셀, 96색
+  { id: 'HARD', name: '어려움 (사진처럼)', colors: 64, gridSize: 200, color: '#FF5757' },   // 200×200 = 40,000 셀, 64색 (2자리 라벨)
 ];
 
 // 완성 모드 옵션

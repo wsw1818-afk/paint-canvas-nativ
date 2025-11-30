@@ -246,6 +246,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             pendingWrongCells = null
         }
 
+        // 🔄 SharedPreferences에서 저장된 진행 상황 복원
+        // gameId가 이미 설정되어 있고 아직 복원되지 않은 경우
+        if (currentGameId != null && filledCells.isEmpty()) {
+            android.util.Log.d("PaintCanvas", "🔄 setCells 완료 후 SharedPreferences 복원 시도: $currentGameId")
+            loadProgressFromPrefs()
+        }
+
         invalidate()
     }
 
@@ -271,6 +278,24 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         if (isEraseMode == enabled) return  // ⚡ 변경 없으면 스킵
         isEraseMode = enabled
         invalidate()
+    }
+
+    /**
+     * 🔄 JS에서 전달받은 gameId 설정 (저장/복원용)
+     * puzzleId 기반의 고유 ID를 사용하여 일관된 저장/복원 보장
+     */
+    fun setGameId(id: String) {
+        if (currentGameId == id) return  // ⚡ 변경 없으면 스킵
+
+        val oldId = currentGameId
+        currentGameId = id
+        android.util.Log.d("PaintCanvas", "🔄 gameId 설정 (from JS): $id (이전: $oldId)")
+
+        // gameId가 설정되면 저장된 진행 상황 복원 시도
+        // 단, 아직 사용자가 칠하지 않은 상태에서만 복원
+        if (!hasUserPainted) {
+            loadProgressFromPrefs()
+        }
     }
 
     fun setViewSize(width: Float, height: Float) {
@@ -337,11 +362,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         imageUri = uri
         isImageLoading = true
 
-        // 🔄 gameId 생성 및 저장된 진행 상황 복원
-        val fileName = uri.substringAfterLast("/").substringBeforeLast(".")
-        currentGameId = "native_${fileName}_${gridSize}"
-        android.util.Log.d("PaintCanvas", "🔄 gameId 설정: $currentGameId")
-        loadProgressFromPrefs()
+        // 🔄 gameId는 JS에서 setGameId로 전달됨 (puzzleId 기반)
+        // 하위 호환성: JS에서 gameId가 전달되지 않으면 파일명 기반으로 폴백
+        if (currentGameId == null) {
+            val fileName = uri.substringAfterLast("/").substringBeforeLast(".")
+            currentGameId = "native_${fileName}_${gridSize}"
+            android.util.Log.d("PaintCanvas", "🔄 gameId 폴백 생성: $currentGameId")
+            loadProgressFromPrefs()
+        }
 
         // 로딩 인디케이터 표시를 위해 먼저 그리기
         invalidate()
@@ -782,6 +810,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     init {
         setWillNotDraw(false)
         cellSize = canvasWidth / gridSize
+        // ⚡ 하드웨어 가속 활성화 (GPU 렌더링)
+        setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -869,9 +899,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             return
         }
 
-        // 안전 체크: 캔버스 크기가 유효하지 않으면 그리지 않음
+        // 안전 체크: 캔버스 뷰 크기가 유효하지 않으면 그리지 않음
+        // ⚡ 최적화: cells가 아직 로드되지 않아도 뷰 크기만 있으면 줌/팬 허용
+        if (canvasViewWidth <= 0 || canvasViewHeight <= 0) {
+            android.util.Log.w("PaintCanvas", "⚠️ onDraw skipped: view not sized yet")
+            return
+        }
+
+        // cellSize가 0이면 아직 cells가 로드되지 않은 상태 - 배경만 그리기
         if (canvasWidth <= 0 || cellSize <= 0 || gridSize <= 0) {
-            android.util.Log.w("PaintCanvas", "⚠️ onDraw skipped: invalid dimensions canvasWidth=$canvasWidth cellSize=$cellSize gridSize=$gridSize")
+            // 로딩 중 메시지 (JS 로딩 오버레이와 별개로 Native에서도 표시)
+            val centerX = width / 2f
+            val centerY = height / 2f
+            canvas.drawColor(Color.parseColor("#1A3A4A"))  // 앱 배경색
+            canvas.drawText("준비 중...", centerX, centerY, loadingTextPaint)
             return
         }
 
@@ -914,7 +955,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // ⚡ 줌 레벨에 따른 텍스트 표시 여부 (확대 시에만 텍스트 표시)
         // 셀이 화면에서 너무 작으면 텍스트가 안 보이므로 그리기 스킵
         val screenCellSize = cellSize * scaleFactor
-        val shouldDrawText = screenCellSize > 12f  // 12dp 이상일 때만 텍스트 표시
+        val shouldDrawText = screenCellSize > 12f  // 12dp 이상일 때만
 
         // 텍스트 크기 미리 계산 (텍스트 그릴 때만)
         val textYOffset = if (shouldDrawText) {
@@ -1131,8 +1172,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     private fun handlePainting(screenX: Float, screenY: Float) {
         try {
-            // Safety check - don't paint if not initialized
+            // Safety check - don't paint if not initialized or still loading
             if (cellSize <= 0f || canvasWidth <= 0f) return
+            if (isImageLoading) return  // ⚡ 이미지 로딩 중 색칠 차단
 
             // ⚡ 재사용 객체로 좌표 변환 (메모리 할당 제거)
             paintingMatrix.reset()
@@ -2015,8 +2057,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     /**
-     * 📸 갤러리 썸네일 캡처 - 원본 이미지 위에 색칠된 부분만 오버레이
-     * 참조 앱 스타일: 원본 사진이 배경, 색칠된 셀만 단색으로 표시
+     * 📸 갤러리 썸네일 캡처 - 미색칠 부분 음영, 색칠된 부분 밝게 표시
+     * 미색칠 영역: 원본 이미지 + 어두운 오버레이 (음영)
+     * 색칠된 영역: 색칠한 색상 그대로 표시 (밝게)
      * @param size 출력 이미지 크기 (정사각형)
      * @return Base64 인코딩된 PNG 이미지 문자열
      */
@@ -2045,7 +2088,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val dstRect = RectF(0f, 0f, captureSize, captureSize)
             canvas.drawBitmap(bitmap, srcRect, dstRect, reusableBitmapPaint)
 
-            // 2단계: 색칠된 셀만 단색으로 오버레이
+            // 2단계: 전체에 어두운 오버레이 (음영 효과)
+            val shadowPaint = Paint().apply {
+                style = Paint.Style.FILL
+                color = Color.argb(230, 0, 0, 0)  // 90% 투명도의 검은색
+            }
+            canvas.drawRect(0f, 0f, captureSize, captureSize, shadowPaint)
+
+            // 3단계: 색칠된 셀만 밝게 표시 (음영 제거 + 색상 표시)
             val cellPaint = Paint().apply {
                 style = Paint.Style.FILL
             }
@@ -2059,12 +2109,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     val cellColor = paintedColorMapInt[cellIndex]
 
                     if (cellColor != null) {
-                        // 색칠된 셀 - 단색으로 표시
+                        // 색칠된 셀 - 밝은 색상으로 표시
                         val left = col * captureCellSize
                         cellPaint.color = cellColor
                         canvas.drawRect(left, top, left + captureCellSize + 0.5f, top + captureCellSize + 0.5f, cellPaint)
                     }
-                    // 미색칠 셀은 원본 이미지 그대로 (이미 배경에 그려짐)
+                    // 미색칠 셀은 어두운 음영 그대로 유지
                 }
             }
 

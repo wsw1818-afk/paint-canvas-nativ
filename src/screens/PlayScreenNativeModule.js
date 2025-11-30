@@ -64,8 +64,11 @@ const colorButtonStyles = StyleSheet.create({
   },
 });
 
-// 색상 팔레트
+// 색상 팔레트 (64색 지원 - 2자리 라벨 사용)
+// 1~36: 단일 문자 (A-Z, 0-9)
+// 37~64: 2자리 라벨 (a1~z9)
 const COLOR_PALETTE = [
+  // 1~26: A-Z
   { id: 'A', hex: '#FF5757', name: '빨강' },
   { id: 'B', hex: '#4CD964', name: '초록' },
   { id: 'C', hex: '#5AB9EA', name: '파랑' },
@@ -92,6 +95,7 @@ const COLOR_PALETTE = [
   { id: 'X', hex: '#FFB6C1', name: '라이트핑크' },
   { id: 'Y', hex: '#FFFFE0', name: '라이트옐로우' },
   { id: 'Z', hex: '#98FB98', name: '페일그린' },
+  // 27~36: 0-9
   { id: '1', hex: '#FFC0CB', name: '핑크' },
   { id: '2', hex: '#DDA0DD', name: '플럼' },
   { id: '3', hex: '#87CEEB', name: '스카이블루' },
@@ -102,6 +106,35 @@ const COLOR_PALETTE = [
   { id: '8', hex: '#DEB887', name: '버릴우드' },
   { id: '9', hex: '#5F9EA0', name: '카뎃블루' },
   { id: '0', hex: '#191970', name: '미드나잇블루' },
+  // 37~64: 2자리 라벨 (a1~z9) - 추가 28색
+  { id: 'a1', hex: '#FF6B6B', name: '코랄레드' },
+  { id: 'a2', hex: '#4ECDC4', name: '민트' },
+  { id: 'a3', hex: '#45B7D1', name: '스카이' },
+  { id: 'a4', hex: '#96CEB4', name: '세이지' },
+  { id: 'a5', hex: '#FFEAA7', name: '바나나' },
+  { id: 'a6', hex: '#DFE6E9', name: '클라우드' },
+  { id: 'a7', hex: '#FDA7DF', name: '핑크버블' },
+  { id: 'a8', hex: '#A29BFE', name: '페리윙클' },
+  { id: 'b1', hex: '#6C5CE7', name: '일렉트릭퍼플' },
+  { id: 'b2', hex: '#00B894', name: '민트그린' },
+  { id: 'b3', hex: '#E17055', name: '테라코타' },
+  { id: 'b4', hex: '#FDCB6E', name: '선플라워' },
+  { id: 'b5', hex: '#E84393', name: '핫핑크' },
+  { id: 'b6', hex: '#00CEC9', name: '로빈스에그' },
+  { id: 'b7', hex: '#FF7675', name: '살몬핑크' },
+  { id: 'b8', hex: '#74B9FF', name: '베이비블루' },
+  { id: 'c1', hex: '#55EFC4', name: '아쿠아마린' },
+  { id: 'c2', hex: '#81ECEC', name: '터키스' },
+  { id: 'c3', hex: '#FAB1A0', name: '피치' },
+  { id: 'c4', hex: '#FF9FF3', name: '바이올렛핑크' },
+  { id: 'c5', hex: '#54A0FF', name: '도저블루' },
+  { id: 'c6', hex: '#5F27CD', name: '로얄퍼플' },
+  { id: 'c7', hex: '#00D2D3', name: '틸' },
+  { id: 'c8', hex: '#FF6F61', name: '리빙코랄' },
+  { id: 'd1', hex: '#9B59B6', name: '아메시스트' },
+  { id: 'd2', hex: '#3498DB', name: '피터리버' },
+  { id: 'd3', hex: '#1ABC9C', name: '그린씨' },
+  { id: 'd4', hex: '#F39C12', name: '오렌지' },
 ];
 
 export default function PlayScreenNativeModule({ route, navigation }) {
@@ -110,16 +143,28 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const completionMode = paramCompletionMode || 'ORIGINAL'; // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
   const { width, height } = useWindowDimensions();
 
+  // 64색까지 고유 라벨 생성 함수
+  const generateLabel = (idx) => {
+    if (idx < 36) {
+      // 0-35: COLOR_PALETTE에서 가져옴
+      return COLOR_PALETTE[idx]?.id || String.fromCharCode(65 + idx);
+    }
+    // 36-63: 2자리 라벨 (a1, a2, ..., d4)
+    const group = Math.floor((idx - 36) / 8); // 0=a, 1=b, 2=c, 3=d
+    const num = (idx - 36) % 8 + 1; // 1-8
+    return `${String.fromCharCode(97 + group)}${num}`; // a1, a2, ..., d4
+  };
+
   // 실제 이미지에서 추출한 색상 사용 (없으면 기본 팔레트 사용)
   const actualColors = useMemo(() => {
     if (paramDominantColors && paramDominantColors.length > 0) {
-      // 이미지에서 추출한 색상을 팔레트 형식으로 변환
+      // 이미지에서 추출한 색상을 팔레트 형식으로 변환 (64색까지 고유 라벨 지원)
       const colors = paramDominantColors.map((color, idx) => ({
-        id: COLOR_PALETTE[idx]?.id || String.fromCharCode(65 + idx), // A, B, C, ...
+        id: COLOR_PALETTE[idx]?.id || generateLabel(idx),
         hex: color.hex,
         name: color.name || `색상 ${idx + 1}`
       }));
-      console.log('[팔레트] actualColors 생성:', colors.map(c => `${c.id}=${c.hex}`).join(', '));
+      console.log('[팔레트] actualColors 생성:', colors.length, '색,', colors.slice(0, 5).map(c => `${c.id}=${c.hex}`).join(', '), '...');
       return colors;
     }
     return COLOR_PALETTE.slice(0, colorCount);
@@ -181,37 +226,37 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   useEffect(() => {
     if (actualColors.length === 0) return;
 
-    // 화면 전환 애니메이션 완료 후 셀 생성 시작
-    const handle = InteractionManager.runAfterInteractions(() => {
+    // ⚡ 최적화: requestAnimationFrame으로 더 빠르게 시작 (InteractionManager 대기 제거)
+    const rafId = requestAnimationFrame(() => {
       const startTime = Date.now();
       if (__DEV__) {
         console.log('[셀생성] 시작:', { gridSize, colorCount, actualColorsCount: actualColors.length });
       }
 
-      const colorMap = new Map(actualColors.map(c => [c.id, c.hex]));
       const totalCells = gridSize * gridSize;
       const cellList = new Array(totalCells);
       const actualColorsLength = actualColors.length;
       const hasGridColors = gridColors && gridColors.length > 0;
 
+      // ⚡ 최적화: colorMap 제거, 직접 접근
       // ⚡ 루프 최적화: 조건문 최소화
       for (let idx = 0; idx < totalCells; idx++) {
         const row = (idx / gridSize) | 0;
         const col = idx % gridSize;
 
-        let targetColorId;
+        let colorIndex;
         if (hasGridColors && gridColors[row]?.[col] !== undefined) {
-          const colorIndex = gridColors[row][col] % actualColorsLength;
-          targetColorId = actualColors[colorIndex]?.id || 'A';
+          colorIndex = gridColors[row][col] % actualColorsLength;
         } else {
-          targetColorId = actualColors[idx % actualColorsLength]?.id || 'A';
+          colorIndex = idx % actualColorsLength;
         }
 
+        const color = actualColors[colorIndex];
         cellList[idx] = {
           row,
           col,
-          targetColorHex: colorMap.get(targetColorId) || '#FFFFFF',
-          label: targetColorId,
+          targetColorHex: color?.hex || '#FFFFFF',
+          label: color?.id || 'A',
         };
       }
 
@@ -223,7 +268,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       setIsCellsReady(true);
     });
 
-    return () => handle.cancel();
+    return () => cancelAnimationFrame(rafId);
   }, [gridSize, colorCount, gridColors, actualColors]);
 
   // 저장된 진행 상황 불러오기
@@ -377,8 +422,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             lastPlayed: new Date().toISOString()
           });
 
-          // 🖼️ 진행 중 썸네일 캡처 (5% 이상일 때만)
-          if (progress >= 5 && progress < 100) {
+          // 🖼️ 진행 중 썸네일 캡처 (1% 이상일 때만)
+          if (progress >= 1 && progress < 100) {
             captureProgressThumbnail(progress);
           }
 
@@ -623,6 +668,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               selectedColorHex={selectedColor?.hex || '#FFFFFF'}
               selectedLabel={selectedColor?.id || 'A'}
               imageUri={imageUri}
+              gameId={gameId}
               filledCells={filledCellsArray}
               wrongCells={wrongCellsArray}
               undoMode={undoMode}
@@ -712,6 +758,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             selectedColorHex={selectedColor?.hex || '#FFFFFF'}
             selectedLabel={selectedColor?.id || 'A'}
             imageUri={imageUri}
+            gameId={gameId}
             filledCells={filledCellsArray}
             wrongCells={wrongCellsArray}
             undoMode={undoMode}

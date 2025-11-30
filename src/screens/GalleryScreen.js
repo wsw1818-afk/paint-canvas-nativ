@@ -9,6 +9,7 @@ export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // 🔄 화면 진입 시 퍼즐 목록 로드 (key={Date.now()}로 매번 재마운트됨)
   useEffect(() => {
     loadSavedPuzzles();
   }, []);
@@ -90,11 +91,11 @@ export default function GalleryScreen({ navigation }) {
     );
   };
 
-  const getDifficultyInfo = (colors) => {
+  const getDifficultyInfo = (colors, gridSize) => {
+    // 난이도 판별: 색상 수 + 격자 크기로 구분
     if (colors <= 16) return { name: '쉬움', color: '#4CD964' };      // 16색 이하 = 쉬움
-    if (colors <= 36) return { name: '보통', color: '#5AB9EA' };     // 36색 이하 = 보통
-    if (colors <= 64) return { name: '어려움', color: '#FF5757' };  // 64색 이하 = 어려움
-    return { name: '초고화질', color: '#9B59B6' };                    // 96색 = 초고화질
+    if (colors > 36 || gridSize >= 200) return { name: '어려움', color: '#FF5757' };  // 36색 초과 또는 200×200 이상 = 어려움
+    return { name: '보통', color: '#5AB9EA' };                         // 그 외 = 보통
   };
 
   return (
@@ -129,7 +130,7 @@ export default function GalleryScreen({ navigation }) {
           </View>
         ) : (
           puzzles.map((puzzle) => {
-            const difficultyInfo = getDifficultyInfo(puzzle.colorCount || 12);
+            const difficultyInfo = getDifficultyInfo(puzzle.colorCount || 12, puzzle.gridSize || 120);
             const completionMode = puzzle.completionMode || 'ORIGINAL';
             const modeInfo = completionMode === 'ORIGINAL'
               ? { icon: '🖼️', name: '원본 이미지', color: '#FF6B6B' }
