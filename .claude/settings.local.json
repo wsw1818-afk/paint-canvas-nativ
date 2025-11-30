@@ -9,7 +9,9 @@
       "Bash(powershell -Command:*)",
       "Bash(./gradlew.bat:*)",
       "Bash(adb logcat:*)",
-      "Bash(.gradlew.bat assembleDebug:*)"
+      "Bash(.gradlew.bat assembleDebug:*)",
+      "Bash(adb devices:*)",
+      "Bash(adb install:*)"
     ],
     "deny": []
   }
