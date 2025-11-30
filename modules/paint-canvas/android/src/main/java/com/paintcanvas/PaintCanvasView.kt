@@ -778,6 +778,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        try {
 
         // ⚡ 이미지 로딩 중일 때 로딩 인디케이터 표시
         if (isImageLoading) {
@@ -904,9 +905,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이렇게 해야 흰색 배경이 먼저 그려지지 않음
 
         canvas.restore()
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ onDraw 오류: ${e.message}")
+        }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        try {
         // ⚡ 성능 최적화: 터치 로그 제거 (매 프레임마다 출력되면 딜레이 발생)
 
         // Only let ScaleGestureDetector process events when there are 2+ fingers
@@ -1033,6 +1038,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         return true
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ onTouchEvent 오류: ${e.message}")
+            return true
+        }
     }
 
     // ⚡ 연속 색칠 최적화: 마지막으로 칠한 셀 추적 (Int 인덱스로 변경)
@@ -1050,46 +1059,50 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val paintingPoints = FloatArray(2)
 
     private fun handlePainting(screenX: Float, screenY: Float) {
-        // Safety check - don't paint if not initialized
-        if (cellSize <= 0f || canvasWidth <= 0f) return
+        try {
+            // Safety check - don't paint if not initialized
+            if (cellSize <= 0f || canvasWidth <= 0f) return
 
-        // ⚡ 재사용 객체로 좌표 변환 (메모리 할당 제거)
-        paintingMatrix.reset()
-        paintingMatrix.postScale(scaleFactor, scaleFactor)
-        paintingMatrix.postTranslate(translateX, translateY)
-        paintingMatrix.invert(paintingInverseMatrix)
+            // ⚡ 재사용 객체로 좌표 변환 (메모리 할당 제거)
+            paintingMatrix.reset()
+            paintingMatrix.postScale(scaleFactor, scaleFactor)
+            paintingMatrix.postTranslate(translateX, translateY)
+            paintingMatrix.invert(paintingInverseMatrix)
 
-        paintingPoints[0] = screenX
-        paintingPoints[1] = screenY
-        paintingInverseMatrix.mapPoints(paintingPoints)
+            paintingPoints[0] = screenX
+            paintingPoints[1] = screenY
+            paintingInverseMatrix.mapPoints(paintingPoints)
 
-        val col = (paintingPoints[0] / cellSize).toInt()
-        val row = (paintingPoints[1] / cellSize).toInt()
+            val col = (paintingPoints[0] / cellSize).toInt()
+            val row = (paintingPoints[1] / cellSize).toInt()
 
-        // Validate bounds
-        if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) return
+            // Validate bounds
+            if (row < 0 || row >= gridSize || col < 0 || col >= gridSize) return
 
-        // ⚡ Int 인덱스로 중복 체크 (String 생성 제거)
-        val cellIndex = row * gridSize + col
+            // ⚡ Int 인덱스로 중복 체크 (String 생성 제거)
+            val cellIndex = row * gridSize + col
 
-        // ⚡ 같은 셀 연속 터치 무시 (드래그 중 같은 셀 반복 방지)
-        if (cellIndex == lastPaintedCellIndex) return
+            // ⚡ 같은 셀 연속 터치 무시 (드래그 중 같은 셀 반복 방지)
+            if (cellIndex == lastPaintedCellIndex) return
 
-        // ⚡ 빠른 드래그 시 중간 셀 보간 (Bresenham 라인 알고리즘)
-        if (lastPaintedRow >= 0 && lastPaintedCol >= 0) {
-            // 이전 셀과 현재 셀 사이의 모든 셀 채우기 (시작점 제외)
-            fillLineCells(lastPaintedRow, lastPaintedCol, row, col)
-        } else {
-            // 첫 번째 터치: 현재 셀만 칠하기
-            paintSingleCell(row, col)
+            // ⚡ 빠른 드래그 시 중간 셀 보간 (Bresenham 라인 알고리즘)
+            if (lastPaintedRow >= 0 && lastPaintedCol >= 0) {
+                // 이전 셀과 현재 셀 사이의 모든 셀 채우기 (시작점 제외)
+                fillLineCells(lastPaintedRow, lastPaintedCol, row, col)
+            } else {
+                // 첫 번째 터치: 현재 셀만 칠하기
+                paintSingleCell(row, col)
+            }
+
+            // ⚡ 모든 셀 처리 후 한 번만 invalidate
+            invalidate()
+
+            lastPaintedCellIndex = cellIndex
+            lastPaintedRow = row
+            lastPaintedCol = col
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ handlePainting 오류: ${e.message}")
         }
-
-        // ⚡ 모든 셀 처리 후 한 번만 invalidate
-        invalidate()
-
-        lastPaintedCellIndex = cellIndex
-        lastPaintedRow = row
-        lastPaintedCol = col
     }
 
     // ⚡ Bresenham 라인 알고리즘으로 두 점 사이 모든 셀 채우기 (시작점 제외, 끝점 포함)
@@ -1133,10 +1146,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // ⚡ 단일 셀 칠하기 (String 생성 최소화)
     private fun paintSingleCell(row: Int, col: Int) {
-        val cellIndex = row * gridSize + col
+        try {
+            val cellIndex = row * gridSize + col
 
-        // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
-        if (isEraseMode) {
+            // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
+            if (isEraseMode) {
             if (wrongCellIndices.contains(cellIndex)) {
                 wrongCellIndices.remove(cellIndex)
                 filledCellIndices.remove(cellIndex)
@@ -1203,6 +1217,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         // 🔄 저장은 flushPendingEventsWithColor에서 배치로 처리 (매 셀마다 호출 제거)
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ paintSingleCell 오류: ${e.message}")
+        }
     }
 
     // ⚡ 색상 정보 포함 이벤트 큐잉 (String 생성 지연)
@@ -1451,92 +1468,100 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * ⚡ 최적화: getPixels/setPixels 배열 처리로 5~10배 속도 향상
      */
     private fun createColoredTexture(pattern: Bitmap, color: Int): Bitmap {
-        // 정사각형으로 보정된 패턴 사용 (비율 왜곡 방지)
-        val squarePattern = getSquarePattern(pattern)
-        val size = squarePattern.width
-        val totalPixels = size * size
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        try {
+            // 정사각형으로 보정된 패턴 사용 (비율 왜곡 방지)
+            val squarePattern = getSquarePattern(pattern)
+            val size = squarePattern.width
+            val totalPixels = size * size
+            val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
 
-        // ⚡ 픽셀 버퍼 재사용 (메모리 할당 최소화)
-        if (texPixelBuffer == null || texPixelBuffer!!.size != totalPixels) {
-            texPixelBuffer = IntArray(totalPixels)
-            outPixelBuffer = IntArray(totalPixels)
-        }
-        val texPixels = texPixelBuffer!!
-        val outPixels = outPixelBuffer!!
+            // ⚡ 픽셀 버퍼 재사용 (메모리 할당 최소화)
+            if (texPixelBuffer == null || texPixelBuffer!!.size != totalPixels) {
+                texPixelBuffer = IntArray(totalPixels)
+                outPixelBuffer = IntArray(totalPixels)
+            }
+            val texPixels = texPixelBuffer!!
+            val outPixels = outPixelBuffer!!
 
-        // ⚡ 배열로 한 번에 읽기 (getPixel 루프 대비 10배 이상 빠름)
-        squarePattern.getPixels(texPixels, 0, size, 0, 0, size, size)
+            // ⚡ 배열로 한 번에 읽기 (getPixel 루프 대비 10배 이상 빠름)
+            squarePattern.getPixels(texPixels, 0, size, 0, 0, size, size)
 
-        // 텍스처 밝기 범위 계산 (최초 1회)
-        if (!texLumCalculated) {
-            var minL = 1f
-            var maxL = 0f
+            // 텍스처 밝기 범위 계산 (최초 1회)
+            if (!texLumCalculated) {
+                var minL = 1f
+                var maxL = 0f
+                for (i in 0 until totalPixels) {
+                    val p = texPixels[i]
+                    val l = ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3f / 255f
+                    if (l < minL) minL = l
+                    if (l > maxL) maxL = l
+                }
+                texMinLum = minL
+                texMaxLum = maxL
+                texLumCalculated = true
+                android.util.Log.d("PaintCanvas", "📊 텍스처 밝기 범위: min=$minL, max=$maxL")
+            }
+
+            val r = color shr 16 and 0xFF
+            val g = color shr 8 and 0xFF
+            val b = color and 0xFF
+
+            // 색상 밝기 계산 (0~1)
+            val colorLuminance = (r * 0.299f + g * 0.587f + b * 0.114f) / 255f
+            val lumRange = texMaxLum - texMinLum
+
+            // 🎨 색상 밝기별 하이라이트/그림자 강도 미리 계산
+            val highlightStr: Float
+            val shadowStr: Float
+            when {
+                colorLuminance >= 0.7f -> { highlightStr = 0.4f; shadowStr = 0.15f }
+                colorLuminance >= 0.4f -> { highlightStr = 0.45f; shadowStr = 0.2f }
+                colorLuminance >= 0.2f -> { highlightStr = 0.5f; shadowStr = 0.2f }
+                else -> { highlightStr = 0.55f; shadowStr = 0.15f }
+            }
+
+            // ⚡ 단일 루프로 모든 픽셀 처리 (2중 루프보다 빠름)
             for (i in 0 until totalPixels) {
-                val p = texPixels[i]
-                val l = ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3f / 255f
-                if (l < minL) minL = l
-                if (l > maxL) maxL = l
-            }
-            texMinLum = minL
-            texMaxLum = maxL
-            texLumCalculated = true
-            android.util.Log.d("PaintCanvas", "📊 텍스처 밝기 범위: min=$minL, max=$maxL")
-        }
+                val texPixel = texPixels[i]
+                val texR = texPixel shr 16 and 0xFF
+                val texG = texPixel shr 8 and 0xFF
+                val texB = texPixel and 0xFF
+                val rawLum = (texR + texG + texB) / 3f / 255f
 
-        val r = color shr 16 and 0xFF
-        val g = color shr 8 and 0xFF
-        val b = color and 0xFF
+                // 📊 텍스처 밝기를 0~1로 정규화
+                val normalizedLum = if (lumRange > 0.01f) {
+                    ((rawLum - texMinLum) / lumRange).coerceIn(0f, 1f)
+                } else {
+                    0.5f
+                }
 
-        // 색상 밝기 계산 (0~1)
-        val colorLuminance = (r * 0.299f + g * 0.587f + b * 0.114f) / 255f
-        val lumRange = texMaxLum - texMinLum
+                // 하이라이트 (Screen): 텍스처 밝은 부분 → 색상 밝게
+                val highlightAmount = normalizedLum * highlightStr
+                val screenR = r + (255 - r) * highlightAmount
+                val screenG = g + (255 - g) * highlightAmount
+                val screenB = b + (255 - b) * highlightAmount
 
-        // 🎨 색상 밝기별 하이라이트/그림자 강도 미리 계산
-        val highlightStr: Float
-        val shadowStr: Float
-        when {
-            colorLuminance >= 0.7f -> { highlightStr = 0.4f; shadowStr = 0.15f }
-            colorLuminance >= 0.4f -> { highlightStr = 0.45f; shadowStr = 0.2f }
-            colorLuminance >= 0.2f -> { highlightStr = 0.5f; shadowStr = 0.2f }
-            else -> { highlightStr = 0.55f; shadowStr = 0.15f }
-        }
+                // 그림자 (Multiply): 텍스처 어두운 부분 → 색상 어둡게
+                val shadowAmount = (1f - normalizedLum) * shadowStr
+                val factor = 1f - shadowAmount
 
-        // ⚡ 단일 루프로 모든 픽셀 처리 (2중 루프보다 빠름)
-        for (i in 0 until totalPixels) {
-            val texPixel = texPixels[i]
-            val texR = texPixel shr 16 and 0xFF
-            val texG = texPixel shr 8 and 0xFF
-            val texB = texPixel and 0xFF
-            val rawLum = (texR + texG + texB) / 3f / 255f
+                val newR = (screenR * factor).toInt().coerceIn(0, 255)
+                val newG = (screenG * factor).toInt().coerceIn(0, 255)
+                val newB = (screenB * factor).toInt().coerceIn(0, 255)
 
-            // 📊 텍스처 밝기를 0~1로 정규화
-            val normalizedLum = if (lumRange > 0.01f) {
-                ((rawLum - texMinLum) / lumRange).coerceIn(0f, 1f)
-            } else {
-                0.5f
+                outPixels[i] = 0xFF000000.toInt() or (newR shl 16) or (newG shl 8) or newB
             }
 
-            // 하이라이트 (Screen): 텍스처 밝은 부분 → 색상 밝게
-            val highlightAmount = normalizedLum * highlightStr
-            val screenR = r + (255 - r) * highlightAmount
-            val screenG = g + (255 - g) * highlightAmount
-            val screenB = b + (255 - b) * highlightAmount
-
-            // 그림자 (Multiply): 텍스처 어두운 부분 → 색상 어둡게
-            val shadowAmount = (1f - normalizedLum) * shadowStr
-            val factor = 1f - shadowAmount
-
-            val newR = (screenR * factor).toInt().coerceIn(0, 255)
-            val newG = (screenG * factor).toInt().coerceIn(0, 255)
-            val newB = (screenB * factor).toInt().coerceIn(0, 255)
-
-            outPixels[i] = 0xFF000000.toInt() or (newR shl 16) or (newG shl 8) or newB
+            // ⚡ 배열로 한 번에 쓰기
+            bitmap.setPixels(outPixels, 0, size, 0, 0, size, size)
+            return bitmap
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ createColoredTexture 오류: ${e.message}")
+            // 폴백: 단색 비트맵 반환
+            val fallback = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+            fallback.eraseColor(color)
+            return fallback
         }
-
-        // ⚡ 배열로 한 번에 쓰기
-        bitmap.setPixels(outPixels, 0, size, 0, 0, size, size)
-        return bitmap
     }
 
     /**
