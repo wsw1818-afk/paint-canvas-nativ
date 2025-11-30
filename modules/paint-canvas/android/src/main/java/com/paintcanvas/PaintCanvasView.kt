@@ -48,9 +48,51 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var imageUri: String? = null
     private var isEraseMode: Boolean = false  // X 제거 모드
 
+    // ⚡ 대형 그리드 최적화 모드 (GPU 부하 방지)
+    // 100+ 그리드에서 텍스처/음영 효과를 간소화하여 RenderThread 크래시 방지
+    private var isLargeGridMode: Boolean = false
+    private val LARGE_GRID_THRESHOLD = 100  // 100x100 이상은 대형 그리드
+
+    // ⚡ invalidate() 스로틀링 (빠른 색칠 시 RenderThread 크래시 방지)
+    private var lastInvalidateTime = 0L
+    private var pendingInvalidate = false
+    private val invalidateHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val MIN_INVALIDATE_INTERVAL = 16L  // 최소 16ms 간격 (~60fps)
+
+    /**
+     * 스로틀링된 invalidate() - 빠른 연속 호출 방지
+     * 대형 그리드에서 빠른 색칠 시 RenderThread 크래시를 방지
+     */
+    private fun throttledInvalidate() {
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastInvalidateTime
+
+        if (elapsed >= MIN_INVALIDATE_INTERVAL) {
+            // 충분한 시간이 지났으면 즉시 invalidate
+            lastInvalidateTime = now
+            pendingInvalidate = false
+            invalidate()
+        } else if (!pendingInvalidate) {
+            // 아직 시간이 안 됐으면 다음 프레임에 예약
+            pendingInvalidate = true
+            invalidateHandler.postDelayed({
+                pendingInvalidate = false
+                lastInvalidateTime = System.currentTimeMillis()
+                invalidate()
+            }, MIN_INVALIDATE_INTERVAL - elapsed)
+        }
+        // pendingInvalidate가 이미 true면 무시 (이미 예약됨)
+    }
+
     fun setGridSize(value: Int) {
         android.util.Log.d("PaintCanvas", "📐 setGridSize called: $value, current canvasWidth=$canvasWidth")
         gridSize = value
+
+        // ⚡ 대형 그리드 모드 설정 (GPU 부하 방지)
+        isLargeGridMode = gridSize >= LARGE_GRID_THRESHOLD
+        if (isLargeGridMode) {
+            android.util.Log.d("PaintCanvas", "⚡ 대형 그리드 모드 활성화: ${gridSize}x${gridSize} (텍스처/음영 간소화)")
+        }
 
         // Only recalculate cellSize, don't touch canvasWidth
         // canvasWidth should be set by setViewSize() from JavaScript
@@ -482,6 +524,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     companion object {
         private const val EDGE_PADDING = 60f  // Padding on all edges for easier painting
+
+        // ⚡ 줌 기반 텍스처 활성화 임계값
+        // 음영: 항상 표시 (줌 레벨 무관)
+        // 텍스처: 40% 줌 이상에서만 표시 (높은 줌에서 디테일 표시)
+        private const val TEXTURE_VISIBLE_ZOOM_THRESHOLD = 0.4f  // 텍스처는 40%부터
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -590,9 +637,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var zoomAnimator: ValueAnimator? = null
     private val ZOOM_ANIMATION_DURATION = 250L  // 애니메이션 지속 시간 (ms)
 
-    // ⚡ 프레임 레이트 제한 (60fps = 16ms, 120fps = 8ms)
-    private var lastInvalidateTime = 0L
-    private val MIN_INVALIDATE_INTERVAL = 12L  // ~83fps 최대
+    // ⚡ 프레임 레이트 제한 - throttledInvalidate()에서 사용
+    // (변수 선언은 클래스 상단으로 이동됨: lastInvalidateTime, MIN_INVALIDATE_INTERVAL)
 
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -818,8 +864,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             // 로딩 텍스트
             canvas.drawText("로딩 중...", centerX, centerY + radius + 60f, loadingTextPaint)
 
-            // 다음 프레임 요청 (애니메이션)
-            postInvalidateDelayed(16)  // ~60fps
+            // 다음 프레임 요청 (애니메이션) - 30fps로 배터리 절약
+            postInvalidateDelayed(33)  // ~30fps
             return
         }
 
@@ -1039,8 +1085,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
                 lastPaintedCol = -1
-                flushPendingEvents()
-                flushPendingEventsWithColor()
+                // ⚡ 터치 종료 시 남은 이벤트 즉시 처리
+                flushEraseEvents()  // X 제거 이벤트
+                flushPendingEventsWithColor()  // 일반 색칠 이벤트
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -1070,9 +1117,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var lastPaintedRow: Int = -1
     private var lastPaintedCol: Int = -1
 
-    // ⚡ 배치 이벤트 전송을 위한 큐
-    private val pendingPaintEvents = mutableListOf<Triple<Int, Int, Boolean>>()
+    // ⚡ 배치 이벤트 전송을 위한 runnable (색상 포함 이벤트용)
     private var batchEventRunnable: Runnable? = null
+
+    // ⚡ X 제거용 별도 큐와 runnable (일반 색칠 큐와 충돌 방지)
+    private val pendingEraseEvents = mutableListOf<Triple<Int, Int, Boolean>>()
+    private var eraseEventRunnable: Runnable? = null
 
     // ⚡ 재사용 가능한 객체들 (handlePainting에서 매번 생성하지 않음)
     private val paintingMatrix = Matrix()
@@ -1115,8 +1165,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 paintSingleCell(row, col)
             }
 
-            // ⚡ 모든 셀 처리 후 한 번만 invalidate
-            invalidate()
+            // ⚡ 스로틀링된 invalidate (빠른 색칠 시 크래시 방지)
+            throttledInvalidate()
 
             lastPaintedCellIndex = cellIndex
             lastPaintedRow = row
@@ -1182,7 +1232,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     filledCells.remove(cellKey)
                     paintedColorMap.remove(cellKey)
                     recentlyRemovedWrongCells.add(cellKey)
-                    queuePaintEvent(row, col, true)
+                    // ⚡ X 제거 전용 큐 사용 (일반 색칠 큐와 충돌 방지)
+                    queueEraseEvent(row, col, true)
                     // 🔄 자동 저장
                     saveProgressToPrefs()
                 }
@@ -1246,8 +1297,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // ⚡ 색상 정보 포함 이벤트 큐잉 (String 생성 지연)
     private data class PaintEvent(val row: Int, val col: Int, val isCorrect: Boolean, val color: Int)
     private val pendingPaintEventsWithColor = mutableListOf<PaintEvent>()
+    private val MAX_PENDING_EVENTS = 500  // ⚡ OOM 방지: 이벤트 큐 크기 제한
 
     private fun queuePaintEventWithColor(row: Int, col: Int, isCorrect: Boolean, color: Int) {
+        // ⚡ OOM 방지: 큐가 너무 커지면 즉시 플러시
+        if (pendingPaintEventsWithColor.size >= MAX_PENDING_EVENTS) {
+            flushPendingEventsWithColor()
+        }
+
         pendingPaintEventsWithColor.add(PaintEvent(row, col, isCorrect, color))
 
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
@@ -1292,40 +1349,44 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
-    // ⚡ JS 이벤트만 큐에 추가 (invalidate는 handlePainting에서 한 번만)
-    private fun queuePaintEvent(row: Int, col: Int, isCorrect: Boolean) {
-        pendingPaintEvents.add(Triple(row, col, isCorrect))
+    // ⚡ X 제거 이벤트 전용 큐 (일반 색칠 큐와 분리하여 충돌 방지)
+    private fun queueEraseEvent(row: Int, col: Int, isCorrect: Boolean) {
+        // ⚡ OOM 방지: 큐가 너무 커지면 즉시 플러시
+        if (pendingEraseEvents.size >= MAX_PENDING_EVENTS) {
+            flushEraseEvents()
+        }
+
+        pendingEraseEvents.add(Triple(row, col, isCorrect))
 
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
-        if (batchEventRunnable != null) return
+        if (eraseEventRunnable != null) return
 
-        // ⚡ 100ms 후 JS 이벤트 배치 전송 (연속 색칠 중 리렌더링 방지)
-        batchEventRunnable = Runnable {
-            flushPendingEvents()
+        // ⚡ 50ms 후 JS 이벤트 배치 전송 (X 제거는 빠른 피드백 필요)
+        eraseEventRunnable = Runnable {
+            flushEraseEvents()
         }
-        postDelayed(batchEventRunnable, 100)
+        postDelayed(eraseEventRunnable, 50)
     }
 
-
-    // ⚡ 남은 이벤트 즉시 처리 (터치 종료 시 또는 타이머 만료 시)
-    private fun flushPendingEvents() {
+    // ⚡ X 제거 이벤트 즉시 처리
+    private fun flushEraseEvents() {
         try {
             // 타이머 취소
-            batchEventRunnable?.let { removeCallbacks(it) }
-            batchEventRunnable = null
+            eraseEventRunnable?.let { removeCallbacks(it) }
+            eraseEventRunnable = null
 
-            if (pendingPaintEvents.isEmpty()) return
+            if (pendingEraseEvents.isEmpty()) return
 
             // ⚡ 리스트 복사 후 순회 (ConcurrentModificationException 방지)
-            val eventsCopy = pendingPaintEvents.toList()
-            pendingPaintEvents.clear()
+            val eventsCopy = pendingEraseEvents.toList()
+            pendingEraseEvents.clear()
 
             // JS 이벤트 배치 전송 (UI는 이미 업데이트됨)
             for ((r, c, correct) in eventsCopy) {
                 sendCellPaintedEvent(r, c, correct)
             }
         } catch (e: Exception) {
-            android.util.Log.e("PaintCanvas", "❌ flushPendingEvents 오류: ${e.message}")
+            android.util.Log.e("PaintCanvas", "❌ flushEraseEvents 오류: ${e.message}")
         }
     }
 
@@ -1373,7 +1434,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             // ⚡ 최적화: GenerateScreen에서 이미 최적화된 이미지는 그대로 로드
             // 기존 퍼즐(1024px) 호환성을 위해 런타임 체크는 유지
-            val maxSize = if (gridSize >= 100) 512 else 1024
+            // 대형 그리드: 384px로 축소 (메모리 40% 추가 절약)
+            val maxSize = if (gridSize >= 100) 384 else 1024
 
             // 1단계: 이미지 크기 확인
             val options = BitmapFactory.Options().apply {
@@ -1437,10 +1499,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
     // ⚠️ 안전성: LinkedHashMap + recycle 조합은 recycled bitmap 크래시 유발
     // 대신 단순 HashMap 사용 (색상 수는 보통 20개 미만으로 메모리 문제 없음)
-    // ⚠️ 캐시 크기 제한: 최대 15개 색상까지만 캐시 (OOM 방지 강화)
-    // - 일반적인 컬러링북은 5~15개 색상 사용
-    // - 128x128 ARGB_8888 = 64KB × 15 = 960KB (약 1MB)
-    private val MAX_TEXTURE_CACHE_SIZE = 15
+    // ⚠️ 캐시 크기 제한: 대형 그리드에서 OOM 방지
+    // - 소형 그리드: 최대 12개 캐시 (64x64 × 12 = 약 200KB)
+    // - 대형 그리드(>=100): 최대 5개 캐시 (메모리 절약 강화)
+    private fun getMaxTextureCacheSize(): Int = if (isLargeGridMode) 5 else 12
     private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
 
     private var textureDebugLogged = false
@@ -1467,9 +1529,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 return
             }
 
+            // ⚡ 줌 기반 텍스처 최적화: 줌 레벨이 임계값 미만이면 단색만 표시
+            // scaleFactor / maxZoom = 현재 줌 비율 (0.0 ~ 1.0)
+            // 예: maxZoom=10, scaleFactor=8 → 80% 줌
+            val zoomRatio = scaleFactor / maxZoom
+            val shouldShowTexture = zoomRatio >= TEXTURE_VISIBLE_ZOOM_THRESHOLD
+
             // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
             val pattern = filledCellPatternBitmap
-            if (pattern == null || pattern.isRecycled) {
+
+            // ⚡ 텍스처 비활성화 조건: 줌 부족 OR 패턴 없음/손상
+            if (!shouldShowTexture || pattern == null || pattern.isRecycled) {
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
@@ -1685,6 +1755,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var shadowDrawnLogOnce = false
 
     private fun drawUnfilledCellWithShadow(canvas: Canvas, left: Float, top: Float, size: Float, row: Int, col: Int) {
+        // 음영은 항상 표시 (줌 레벨 무관)
+        // 사용자가 어느 줌에서든 원본 이미지 힌트를 볼 수 있음
+
         val bitmap = originalBitmap ?: backgroundBitmap
 
         // ⚠️ 안전 체크: bitmap이 null이거나 recycled면 흰색 배경
@@ -2039,8 +2112,21 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             // WEAVE 모드: 텍스처 합성
             val pattern = filledCellPatternBitmap
             if (pattern != null) {
-                val texturedBitmap = filledCellTextureCache.getOrPut(color) {
-                    createColoredTexture(pattern, color)
+                // ⚡ OOM 방지: 캐시 크기 제한 (대형 그리드에서 더 작은 캐시)
+                val maxCacheSize = getMaxTextureCacheSize()
+                val texturedBitmap = if (filledCellTextureCache.containsKey(color)) {
+                    filledCellTextureCache[color]!!
+                } else {
+                    // 캐시가 가득 찼으면 가장 오래된 항목 제거
+                    if (filledCellTextureCache.size >= maxCacheSize) {
+                        val oldestKey = filledCellTextureCache.keys.firstOrNull()
+                        if (oldestKey != null) {
+                            filledCellTextureCache.remove(oldestKey)?.recycle()
+                        }
+                    }
+                    val newBitmap = createColoredTexture(pattern, color)
+                    filledCellTextureCache[color] = newBitmap
+                    newBitmap
                 }
                 val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
                 val dstRect = RectF(left, top, left + size, top + size)
@@ -2179,19 +2265,36 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             val filledArray = data.optJSONArray("filledCells") ?: return
             val wrongArray = data.optJSONArray("wrongCells")
+            val colorMapObj = data.optJSONObject("paintedColors")  // 색상 정보
 
             // 기존 데이터 클리어
             filledCells.clear()
             filledCellIndices.clear()
             wrongPaintedCells.clear()
             wrongCellIndices.clear()
+            paintedColorMapInt.clear()
+            paintedColorMap.clear()
 
             // filledCells 복원
             for (i in 0 until filledArray.length()) {
                 val cellKey = filledArray.getString(i)
                 filledCells.add(cellKey)
                 val idx = parseIndex(cellKey)
-                if (idx >= 0) filledCellIndices.add(idx)
+                if (idx >= 0) {
+                    filledCellIndices.add(idx)
+
+                    // 🎨 색상 복원: 저장된 색상이 있으면 사용, 없으면 정답 색상 사용
+                    val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
+                    if (savedColor != 0) {
+                        paintedColorMapInt[idx] = savedColor
+                        paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                    } else if (parsedColorMap.containsKey(idx)) {
+                        // 정답 색상으로 폴백 (정답으로 칠한 셀)
+                        val correctColor = parsedColorMap[idx] ?: Color.WHITE
+                        paintedColorMapInt[idx] = correctColor
+                        paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and correctColor)
+                    }
+                }
             }
 
             // wrongCells 복원
@@ -2200,11 +2303,25 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     val cellKey = wrongArray.getString(i)
                     wrongPaintedCells.add(cellKey)
                     val idx = parseIndex(cellKey)
-                    if (idx >= 0) wrongCellIndices.add(idx)
+                    if (idx >= 0) {
+                        wrongCellIndices.add(idx)
+
+                        // 잘못된 셀도 색상 복원
+                        val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
+                        if (savedColor != 0) {
+                            paintedColorMapInt[idx] = savedColor
+                            paintedColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                        }
+                    }
                 }
             }
 
-            android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
+            // 복원 완료 시 hasUserPainted 플래그 설정 (JS 업데이트 무시)
+            if (filledCells.isNotEmpty()) {
+                hasUserPainted = true
+            }
+
+            android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}, colors=${paintedColorMapInt.size}")
             invalidate()
 
         } catch (e: Exception) {
@@ -2226,6 +2343,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     /**
      * 진행 상황을 동기적으로 저장 (뷰 분리 시 사용)
+     * 🎨 색상 정보도 함께 저장하여 복원 시 정확한 색상 표시
      */
     private fun saveProgressToPrefsSync() {
         val gameId = currentGameId ?: return
@@ -2235,16 +2353,36 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val filledArray = JSONArray(filledCells.toList())
             val wrongArray = JSONArray(wrongPaintedCells.toList())
 
+            // 🎨 색상 정보 저장 (cellKey -> colorInt)
+            val colorMapObj = JSONObject()
+            for (cellKey in filledCells) {
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) {
+                    paintedColorMapInt[idx]?.let { color ->
+                        colorMapObj.put(cellKey, color)
+                    }
+                }
+            }
+            for (cellKey in wrongPaintedCells) {
+                val idx = parseIndex(cellKey)
+                if (idx >= 0) {
+                    paintedColorMapInt[idx]?.let { color ->
+                        colorMapObj.put(cellKey, color)
+                    }
+                }
+            }
+
             val data = JSONObject().apply {
                 put("filledCells", filledArray)
                 put("wrongCells", wrongArray)
+                put("paintedColors", colorMapObj)  // 색상 정보 추가
                 put("timestamp", System.currentTimeMillis())
             }
 
             // ⚠️ commit() 사용: 동기 저장으로 앱 종료 시에도 확실히 저장
             val success = prefs.edit().putString(gameId, data.toString()).commit()
             if (success) {
-                android.util.Log.d("PaintCanvas", "💾 진행 상황 저장 완료: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size})")
+                android.util.Log.d("PaintCanvas", "💾 진행 상황 저장 완료: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size}, colors=${colorMapObj.length()})")
             } else {
                 android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: commit() returned false")
             }

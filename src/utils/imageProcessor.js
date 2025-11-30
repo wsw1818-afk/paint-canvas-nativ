@@ -597,7 +597,8 @@ export async function processImage(imageUri, gridSize = 85, colorCount = 8, preO
       console.log(`⚡ 이미 최적화된 이미지 사용: ${targetSize}px (리사이즈 스킵)`);
     } else {
       // 기존 퍼즐 호환성: preOptimizedSize가 없으면 기존 방식으로 리사이즈
-      targetSize = gridSize >= 100 ? 512 : 1024;
+      // 대형 그리드는 256px로 제한하여 OOM 방지
+      targetSize = gridSize >= 100 ? 256 : 1024;
       console.log(`📐 레거시 모드: ${targetSize}px로 리사이즈`);
 
       const resizedImage = await manipulateAsync(

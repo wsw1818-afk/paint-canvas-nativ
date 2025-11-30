@@ -154,9 +154,10 @@ export default function GenerateScreen({ route, navigation }) {
       console.log('원본 이미지 URI:', selectedImage.uri);
 
       // ⚡ 최적화: gridSize 기반 이미지 크기 결정 (한 번만 리사이즈)
-      // - gridSize >= 100 (대형 그리드) → 512px (OOM 방지)
+      // - gridSize >= 100 (대형 그리드) → 256px (OOM 방지 강화)
       // - gridSize < 100 (소형 그리드) → 1024px (고화질 유지)
-      const optimizedSize = difficulty.gridSize >= 100 ? 512 : 1024;
+      // 170×170 격자에서 256px = 셀당 1.5px, 메모리 75% 감소
+      const optimizedSize = difficulty.gridSize >= 100 ? 256 : 1024;
       const thumbnailSize = 200;  // 갤러리 목록용 썸네일
 
       console.log(`📐 최적화 크기 결정: gridSize=${difficulty.gridSize} → ${optimizedSize}px`);

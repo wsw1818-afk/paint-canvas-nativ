@@ -135,14 +135,17 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebugPanel, setShowDebugPanel] = useState(__DEV__ ? false : false); // 기본 비활성화 (성능)
 
-  // 고유 게임 ID (이미지 URI 기반) - Native와 동일한 형식 사용
-  // ⚠️ Native: "native_${fileName}_${gridSize}" 형식
+  // 고유 게임 ID (puzzleId 기반) - 일관된 저장/복원을 위해 puzzleId 사용
+  // puzzleId가 없으면 imageUri 기반으로 폴백 (하위 호환성)
   const gameId = useMemo(() => {
+    if (puzzleId) {
+      return `puzzle_progress_${puzzleId}`;
+    }
     if (!imageUri) return null;
-    // 파일명에서 확장자 제거 (Native와 동일하게)
+    // 폴백: 파일명에서 확장자 제거
     const fileName = imageUri.split('/').pop()?.split('.')[0] || '';
     return `native_${fileName}_${gridSize}`;
-  }, [imageUri, gridSize]);
+  }, [puzzleId, imageUri, gridSize]);
 
   // 폴드7 접힘/펼침 감지
   // 접힘: 884 x 2208 (가로)
@@ -472,11 +475,21 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     setSelectedColor(color);
   }, []);
 
-  // filledCells를 배열로 변환 (캐싱 - 매 렌더마다 새 배열 생성 방지)
-  const filledCellsArray = useMemo(() => Array.from(filledCells), [filledCells]);
+  // ⚡ OOM 방지: filledCells/wrongCells는 초기 로딩 시에만 Native로 전달
+  // Native가 색칠 상태를 자체 관리하므로, 매 렌더링마다 전달하면 메모리 폭발
+  // hasUserPainted가 true가 되면 Native가 이 prop을 무시함
+  const initialFilledCellsRef = useRef(null);
+  const initialWrongCellsRef = useRef(null);
 
-  // ⚡ 최적화: wrongCells 배열 변환도 캐싱
-  const wrongCellsArray = useMemo(() => Array.from(wrongCells), [wrongCells]);
+  // 최초 1회만 배열 생성 (isCanvasReady가 true가 되는 시점)
+  if (initialFilledCellsRef.current === null && isCanvasReady) {
+    initialFilledCellsRef.current = Array.from(filledCells);
+    initialWrongCellsRef.current = Array.from(wrongCells);
+  }
+
+  // 초기값이 설정되면 그 값을 계속 사용 (불변)
+  const filledCellsArray = initialFilledCellsRef.current || [];
+  const wrongCellsArray = initialWrongCellsRef.current || [];
 
   // Gestures and rendering are now handled entirely by Native code
   // No JavaScript transform needed!
