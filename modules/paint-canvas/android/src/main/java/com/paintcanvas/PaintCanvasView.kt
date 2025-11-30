@@ -41,7 +41,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val prefs: SharedPreferences = context.getSharedPreferences("PaintCanvasProgress", Context.MODE_PRIVATE)
     private var currentGameId: String? = null
     private var saveJob: Job? = null
-    private val saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var gridSize: Int = 60
     private var cells: List<CellData> = emptyList()
@@ -281,7 +281,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     // ⚡ 비동기 이미지 로딩용 코루틴 스코프
-    private val imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isImageLoading = false
 
     fun setImageUri(uri: String) {
@@ -302,6 +302,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // 로딩 인디케이터 표시를 위해 먼저 그리기
         invalidate()
+
+        // ⚡ 스코프가 취소된 상태면 재생성
+        if (!imageLoadScope.isActive) {
+            imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        }
 
         // ⚡ 백그라운드에서 이미지 로드 (UI 블로킹 방지)
         imageLoadScope.launch {
@@ -1912,15 +1917,37 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // ⚡ 뷰 연결 시 코루틴 스코프 재생성 (백그라운드 → 포그라운드 복귀 시)
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        try {
+            // 취소된 스코프가 있으면 재생성
+            if (!imageLoadScope.isActive) {
+                imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            }
+            if (!saveScope.isActive) {
+                saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+            }
+            android.util.Log.d("PaintCanvas", "✅ View attached, coroutine scopes ready")
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ onAttachedToWindow 오류: ${e.message}")
+        }
+    }
+
     // ⚡ 뷰 분리 시 코루틴 정리 및 진행 상황 저장
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        // 즉시 저장 (비동기 저장 취소하고 동기적으로 저장)
-        saveJob?.cancel()
-        saveProgressToPrefsSync()
-        imageLoadScope.cancel()
-        saveScope.cancel()
-        android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, coroutine scopes cancelled")
+        try {
+            // 즉시 저장 (비동기 저장 취소하고 동기적으로 저장)
+            saveJob?.cancel()
+            saveProgressToPrefsSync()
+            // 스코프 취소 (재연결 시 onAttachedToWindow에서 재생성)
+            imageLoadScope.cancel()
+            saveScope.cancel()
+            android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, coroutine scopes cancelled")
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ onDetachedFromWindow 오류: ${e.message}")
+        }
     }
 
     // ====== 🔄 자동 저장/복원 기능 ======
@@ -1974,16 +2001,28 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * 진행 상황을 SharedPreferences에 저장 (디바운스 적용)
      */
     private fun saveProgressToPrefs() {
-        val gameId = currentGameId ?: return
-        if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
+        try {
+            val gameId = currentGameId ?: return
+            if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
 
-        // 기존 저장 작업 취소
-        saveJob?.cancel()
+            // 기존 저장 작업 취소
+            saveJob?.cancel()
 
-        // 1초 디바운스로 저장 (너무 자주 저장 방지)
-        saveJob = saveScope.launch {
-            delay(1000)
-            saveProgressToPrefsSync()
+            // 스코프가 활성 상태가 아니면 동기적으로 저장
+            if (!saveScope.isActive) {
+                saveProgressToPrefsSync()
+                return
+            }
+
+            // 1초 디바운스로 저장 (너무 자주 저장 방지)
+            saveJob = saveScope.launch {
+                delay(1000)
+                saveProgressToPrefsSync()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ saveProgressToPrefs 오류: ${e.message}")
+            // 폴백: 동기적으로 저장 시도
+            try { saveProgressToPrefsSync() } catch (_: Exception) {}
         }
     }
 
