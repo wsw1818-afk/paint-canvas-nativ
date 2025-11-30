@@ -1169,22 +1169,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             // X 고치기 모드: X만 지우고 빈 셀로 복원 (다시 칠할 수 있게)
             if (isEraseMode) {
-            if (wrongCellIndices.contains(cellIndex)) {
-                wrongCellIndices.remove(cellIndex)
-                filledCellIndices.remove(cellIndex)
-                paintedColorMapInt.remove(cellIndex)
-                // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트
-                val cellKey = "$row-$col"
-                wrongPaintedCells.remove(cellKey)
-                filledCells.remove(cellKey)
-                paintedColorMap.remove(cellKey)
-                recentlyRemovedWrongCells.add(cellKey)
-                queuePaintEvent(row, col, true)
-                // 🔄 자동 저장
-                saveProgressToPrefs()
+                if (wrongCellIndices.contains(cellIndex)) {
+                    wrongCellIndices.remove(cellIndex)
+                    filledCellIndices.remove(cellIndex)
+                    paintedColorMapInt.remove(cellIndex)
+                    // ⚡ String 맵은 JS 이벤트 전송 시에만 업데이트
+                    val cellKey = "$row-$col"
+                    wrongPaintedCells.remove(cellKey)
+                    filledCells.remove(cellKey)
+                    paintedColorMap.remove(cellKey)
+                    recentlyRemovedWrongCells.add(cellKey)
+                    queuePaintEvent(row, col, true)
+                    // 🔄 자동 저장
+                    saveProgressToPrefs()
+                }
+                return
             }
-            return
-        }
 
         // ⚠️ 이미 잘못 칠한 셀은 고치기 모드(isEraseMode)에서만 수정 가능
         if (wrongCellIndices.contains(cellIndex)) {
