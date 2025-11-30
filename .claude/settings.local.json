@@ -8,7 +8,8 @@
       "Bash(del \"modules\\paint-canvas\\src\\KakaoTalk_20251129_131618985.jpg\")",
       "Bash(powershell -Command:*)",
       "Bash(./gradlew.bat:*)",
-      "Bash(adb logcat:*)"
+      "Bash(adb logcat:*)",
+      "Bash(.gradlew.bat assembleDebug:*)"
     ],
     "deny": []
   }
