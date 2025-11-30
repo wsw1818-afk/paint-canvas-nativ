@@ -476,8 +476,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
-        // Semi-transparent yellow overlay for selected label cells
-        color = Color.parseColor("#80FFEB3B") // 50% opacity yellow
+        // Semi-transparent gray overlay for selected label cells
+        color = Color.parseColor("#80BDBDBD") // 50% opacity light gray
     }
 
     private val backgroundClearPaint = Paint().apply {
@@ -564,9 +564,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var isPinching = false
     private var pinchStartScale = 1f  // 핀치 시작 시 스케일
     private var pinchStartSpan = 0f   // 핀치 시작 시 손가락 거리
-    private var isPanMode = false     // 🔒 팬 모드 활성화 시 줌 완전 차단
-    private var isZoomMode = false    // 🔍 줌 모드 활성화 시 팬 중 줌 허용
-    private var lastSpan = 0f         // 이전 손가락 거리 (줌/팬 판별용)
 
     // 🎬 부드러운 줌 애니메이션 (두 손가락 탭용)
     private var zoomAnimator: ValueAnimator? = null
@@ -578,67 +575,43 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
-            // 🔒 팬 모드가 명확히 활성화되면 줌 차단 (줌 모드면 허용)
-            if (isPanMode && !isZoomMode) {
-                return true
-            }
+            // ⚠️ 안전 체크
+            if (pinchStartSpan <= 0f) return true
 
-            // 🔍 아직 모드가 결정되지 않았으면 줌 허용 (기본 동작)
-            // isPanMode=false, isZoomMode=false 상태에서도 줌 가능
-
-            // ⚠️ 안전 체크: pinchStartSpan이 0이면 무시
-            if (pinchStartSpan <= 0f) {
-                return true
-            }
-
-            // 🎯 5단계 줌
-            // 확대: 1x→80%, 80%→100%
-            // 축소: 100%→80%, 80%→50%, 50%→1x
+            // 🎯 5단계 줌: 확대 1x→80%→100%, 축소 100%→80%→50%→1x
             val spanRatio = detector.currentSpan / pinchStartSpan
             val zoomTarget80 = maxZoom * 0.8f
             val zoomTarget50 = maxZoom * 0.5f
 
-            // 🔧 경계값 허용 오차 (부동소수점 비교 문제 방지)
-            val tolerance = 0.01f
-
             // ⚡ 가속 줌: 손가락 50% 벌리면/모으면 목표까지 도달
             var newScale = if (spanRatio >= 1f) {
-                // 🔼 확대: 1x→80%, 80%→100%
-                val expandTarget = if (pinchStartScale < zoomTarget80 - tolerance) zoomTarget80 else maxZoom
-                val progress = (spanRatio - 1f) / 0.5f
-                pinchStartScale + (expandTarget - pinchStartScale) * progress.coerceIn(0f, 1f)
+                // 🔼 확대
+                val expandTarget = if (pinchStartScale < zoomTarget80) zoomTarget80 else maxZoom
+                val progress = ((spanRatio - 1f) / 0.5f).coerceIn(0f, 1f)
+                pinchStartScale + (expandTarget - pinchStartScale) * progress
             } else {
-                // 🔽 축소: 100%→80%, 80%→50%, 50%→1x
+                // 🔽 축소
                 val shrinkTarget = when {
-                    pinchStartScale > zoomTarget80 + tolerance -> zoomTarget80  // 100%~81% → 80%
-                    pinchStartScale > zoomTarget50 + tolerance -> zoomTarget50  // 80%~51% → 50%
-                    else -> 1f                                                   // 50%~1x → 1x
+                    pinchStartScale > zoomTarget80 -> zoomTarget80
+                    pinchStartScale > zoomTarget50 -> zoomTarget50
+                    else -> 1f
                 }
-                val progress = (1f - spanRatio) / 0.5f
-                pinchStartScale - (pinchStartScale - shrinkTarget) * progress.coerceIn(0f, 1f)
+                val progress = ((1f - spanRatio) / 0.5f).coerceIn(0f, 1f)
+                pinchStartScale - (pinchStartScale - shrinkTarget) * progress
             }
 
-            // 범위 제한: 전체 범위 (1x ~ maxZoom)
             newScale = newScale.coerceIn(1f, maxZoom)
 
             // 포커스 포인트 기준 줌 적용
             val focusX = detector.focusX
             val focusY = detector.focusY
-
-            // 스케일 변화에 따른 위치 조정 (포커스 포인트 유지)
             val scaleDelta = newScale / scaleFactor
             translateX = focusX - (focusX - translateX) * scaleDelta
             translateY = focusY - (focusY - translateY) * scaleDelta
 
             scaleFactor = newScale
             applyBoundaries()
-
-            // ⚡ 프레임 레이트 제한
-            val currentTime = System.currentTimeMillis()
-            if (currentTime - lastInvalidateTime >= MIN_INVALIDATE_INTERVAL) {
-                lastInvalidateTime = currentTime
-                invalidate()
-            }
+            invalidate()
 
             return true
         }
@@ -646,24 +619,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             touchMode = TouchMode.ZOOM
             isPinching = true
-            pinchStartScale = scaleFactor  // 현재 스케일 저장
-            pinchStartSpan = detector.currentSpan  // 현재 손가락 거리 저장
-            lastSpan = detector.currentSpan  // 🔍 초기 span 저장
-            // isPanMode, isZoomMode는 ACTION_MOVE에서 동작에 따라 설정됨
-
-            // 진행 중인 애니메이션 취소
+            pinchStartScale = scaleFactor
+            pinchStartSpan = detector.currentSpan
             zoomAnimator?.cancel()
-
             return true
         }
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
             touchMode = TouchMode.NONE
             isPinching = false
-            isPanMode = false   // 🔒 팬 모드 리셋
-            isZoomMode = false  // 🔍 줌 모드 리셋
-
-            // 🎯 줌 종료 시 currentZoomIndex 동기화 (두 손가락 탭 줌과 일관성)
             syncZoomIndex()
         }
     })
@@ -1004,43 +968,16 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         }
                     }
                     2 -> {
-                        // Two fingers = pan + zoom
+                        // Two fingers = pan + zoom (ScaleGestureDetector가 줌 처리)
                         preventPaintOnce = true
                         allowPainting = false
 
                         val centroidX = (event.getX(0) + event.getX(1)) / 2f
                         val centroidY = (event.getY(0) + event.getY(1)) / 2f
 
-                        // 🔍 손가락 거리 계산 (줌/팬 판별용)
-                        val dx0 = event.getX(0) - event.getX(1)
-                        val dy0 = event.getY(0) - event.getY(1)
-                        val currentSpan = kotlin.math.sqrt(dx0 * dx0 + dy0 * dy0)
-
-                        // 🔍 손가락 거리 변화량 (줌 제스처 감지)
-                        val spanChange = kotlin.math.abs(currentSpan - lastSpan)
-                        val spanChangeRatio = if (lastSpan > 0) spanChange / lastSpan else 0f
-
-                        // 중심점 이동량 (팬 제스처 감지)
+                        // 팬 처리 (줌은 ScaleGestureDetector가 처리)
                         val dx = centroidX - lastTouchX
                         val dy = centroidY - lastTouchY
-                        val moveDistance = kotlin.math.sqrt(dx * dx + dy * dy)
-
-                        // 🎯 줌/팬 모드 동적 판별 (더 민감하게)
-                        // - 손가락 거리가 2% 이상 변하면 → 줌 모드 (핀치 감지)
-                        // - 줌 모드가 아니고 이동이 크면 → 팬 모드
-
-                        // 🔍 줌 모드를 먼저 체크 (핀치 제스처가 우선, 더 민감하게)
-                        if (!isZoomMode && spanChangeRatio > 0.02f) {
-                            isZoomMode = true
-                            isPanMode = false  // 줌이 감지되면 팬 해제
-                        }
-
-                        // 팬 모드는 줌 모드가 아닐 때만
-                        if (!isZoomMode && !isPanMode && moveDistance > 20f) {
-                            isPanMode = true
-                        }
-
-                        lastSpan = currentSpan
 
                         translateX += dx
                         translateY += dy
@@ -1072,14 +1009,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 preventPaintOnce = false
                 allowPainting = false
                 hasMoved = false
-                isPanMode = false   // 🔒 팬 모드 리셋
-                isZoomMode = false  // 🔍 줌 모드 리셋
 
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
                 lastPaintedCol = -1
                 flushPendingEvents()
-                flushPendingEventsWithColor()  // ⚡ 새 이벤트 시스템도 플러시
+                flushPendingEventsWithColor()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -1087,8 +1022,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     touchMode = TouchMode.NONE
                     preventPaintOnce = true
                     allowPainting = false
-                    isPanMode = false   // 🔒 팬 모드 리셋
-                    isZoomMode = false  // 🔍 줌 모드 리셋
                 }
             }
 
@@ -1096,8 +1029,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 touchMode = TouchMode.NONE
                 activePointerId = -1
                 hasMoved = false
-                isPanMode = false   // 🔒 팬 모드 리셋
-                isZoomMode = false  // 🔍 줌 모드 리셋
             }
         }
 
