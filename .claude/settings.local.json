@@ -12,7 +12,8 @@
       "Bash(.gradlew.bat assembleDebug:*)",
       "Bash(adb devices:*)",
       "Bash(adb install:*)",
-      "Bash(H:Claude_workColorPlayExpoandroidgradlew.bat assembleDebug)"
+      "Bash(H:Claude_workColorPlayExpoandroidgradlew.bat assembleDebug)",
+      "Bash(H:)"
     ],
     "deny": []
   }
