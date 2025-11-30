@@ -289,6 +289,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             return
         }
 
+        // 🧹 새 이미지 로드 전 기존 Bitmap 해제 (OOM 방지)
+        releaseImageBitmaps()
+
         imageUri = uri
         isImageLoading = true
 
@@ -1382,8 +1385,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
     // ⚠️ 안전성: LinkedHashMap + recycle 조합은 recycled bitmap 크래시 유발
     // 대신 단순 HashMap 사용 (색상 수는 보통 20개 미만으로 메모리 문제 없음)
-    // ⚠️ 캐시 크기 제한: 최대 30개 색상까지만 캐시 (OOM 방지)
-    private val MAX_TEXTURE_CACHE_SIZE = 30
+    // ⚠️ 캐시 크기 제한: 최대 15개 색상까지만 캐시 (OOM 방지 강화)
+    // - 일반적인 컬러링북은 5~15개 색상 사용
+    // - 128x128 ARGB_8888 = 64KB × 15 = 960KB (약 1MB)
+    private val MAX_TEXTURE_CACHE_SIZE = 15
     private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
 
     private var textureDebugLogged = false
@@ -2016,7 +2021,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
-    // ⚡ 뷰 분리 시 코루틴 정리 및 진행 상황 저장
+    // ⚡ 뷰 분리 시 코루틴 정리, Bitmap 해제, 진행 상황 저장
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         try {
@@ -2024,9 +2029,93 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             saveProgressToPrefsSync()
             // 스코프 취소 (재연결 시 onAttachedToWindow에서 재생성)
             imageLoadScope.cancel()
-            android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, coroutine scopes cancelled")
+
+            // 🧹 메모리 정리: 모든 Bitmap 해제 (OOM 방지)
+            releaseBitmaps()
+
+            android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, bitmaps released")
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ onDetachedFromWindow 오류: ${e.message}")
+        }
+    }
+
+    /**
+     * 🧹 이미지 Bitmap만 해제 (새 이미지 로드 전 호출)
+     * - backgroundBitmap, originalBitmap, 텍스처 캐시만 해제
+     * - 패턴 Bitmap은 재사용하므로 유지
+     */
+    private fun releaseImageBitmaps() {
+        try {
+            // 이미지 Bitmap 해제
+            backgroundBitmap?.let { if (!it.isRecycled) it.recycle() }
+            backgroundBitmap = null
+
+            originalBitmap?.let { if (!it.isRecycled) it.recycle() }
+            originalBitmap = null
+
+            // 텍스처 캐시 해제 (색상별 생성된 텍스처)
+            for (bitmap in filledCellTextureCache.values) {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+            filledCellTextureCache.clear()
+            tiledShaderCache.clear()
+
+            // squarePattern 해제 (이미지마다 다름)
+            squarePatternBitmap?.let { if (!it.isRecycled) it.recycle() }
+            squarePatternBitmap = null
+
+            // 텍스처 밝기 캐시 초기화
+            texLumCalculated = false
+
+            android.util.Log.d("PaintCanvas", "🗑️ 이미지 Bitmap 해제 완료 (새 이미지 로드 준비)")
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ releaseImageBitmaps 오류: ${e.message}")
+        }
+    }
+
+    /**
+     * 🧹 모든 Bitmap 메모리 해제 (OOM 방지)
+     * - 뷰 분리 시, 이미지 전환 시 호출
+     */
+    private fun releaseBitmaps() {
+        try {
+            // 1. 메인 이미지 Bitmap 해제
+            backgroundBitmap?.let { if (!it.isRecycled) it.recycle() }
+            backgroundBitmap = null
+
+            originalBitmap?.let { if (!it.isRecycled) it.recycle() }
+            originalBitmap = null
+
+            // 2. 패턴 Bitmap 해제
+            weavePatternBitmap?.let { if (!it.isRecycled) it.recycle() }
+            weavePatternBitmap = null
+
+            filledCellPatternBitmap?.let { if (!it.isRecycled) it.recycle() }
+            filledCellPatternBitmap = null
+
+            wrongMarkBitmap?.let { if (!it.isRecycled) it.recycle() }
+            wrongMarkBitmap = null
+
+            squarePatternBitmap?.let { if (!it.isRecycled) it.recycle() }
+            squarePatternBitmap = null
+
+            // 3. 텍스처 캐시 Bitmap 해제
+            for (bitmap in filledCellTextureCache.values) {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+            filledCellTextureCache.clear()
+            tiledShaderCache.clear()
+
+            // 4. 픽셀 버퍼 해제
+            texPixelBuffer = null
+            outPixelBuffer = null
+
+            // 5. 텍스처 밝기 캐시 초기화 (다음 이미지에서 재계산)
+            texLumCalculated = false
+
+            android.util.Log.d("PaintCanvas", "🗑️ 모든 Bitmap 메모리 해제 완료")
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ releaseBitmaps 오류: ${e.message}")
         }
     }
 
