@@ -308,38 +308,53 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // ⚡ 백그라운드에서 이미지 로드 (UI 블로킹 방지)
         imageLoadScope.launch {
-            val startTime = System.currentTimeMillis()
+            try {
+                val startTime = System.currentTimeMillis()
 
-            // 1. 이미지 로드 (IO 스레드)
-            val loadedBitmap = loadBitmap(uri)
+                // 1. 이미지 로드 (IO 스레드)
+                val loadedBitmap = loadBitmap(uri)
 
-            // 2. 텍스처 적용 (CPU 집약적 작업)
-            val texturedBitmap = if (loadedBitmap != null && filledCellPatternBitmap != null) {
-                applyTextureToOriginalImage(loadedBitmap, filledCellPatternBitmap!!)
-            } else {
-                loadedBitmap
-            }
-
-            val loadTime = System.currentTimeMillis() - startTime
-            android.util.Log.d("PaintCanvas", "⚡ 비동기 이미지 로드 완료: ${loadTime}ms")
-
-            // 3. 메인 스레드에서 UI 업데이트
-            withContext(Dispatchers.Main) {
-                originalBitmap = loadedBitmap
-                backgroundBitmap = texturedBitmap
-
-                // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
-                if (backgroundBitmap != null && cells.isNotEmpty()) {
-                    for (cell in cells) {
-                        val cellIndex = cell.row * gridSize + cell.col
-                        parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
-                    }
-                    android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
+                // 2. 텍스처 적용 (CPU 집약적 작업)
+                val pattern = filledCellPatternBitmap
+                val texturedBitmap = if (loadedBitmap != null && pattern != null && !pattern.isRecycled) {
+                    applyTextureToOriginalImage(loadedBitmap, pattern)
+                } else {
+                    loadedBitmap
                 }
 
-                isImageLoading = false
-                android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
-                invalidate()
+                val loadTime = System.currentTimeMillis() - startTime
+                android.util.Log.d("PaintCanvas", "⚡ 비동기 이미지 로드 완료: ${loadTime}ms")
+
+                // 3. 메인 스레드에서 UI 업데이트
+                withContext(Dispatchers.Main) {
+                    try {
+                        originalBitmap = loadedBitmap
+                        backgroundBitmap = texturedBitmap
+
+                        // ✨ parsedColorMap 업데이트 (이미 cells가 설정된 경우)
+                        val bg = backgroundBitmap
+                        if (bg != null && !bg.isRecycled && cells.isNotEmpty()) {
+                            for (cell in cells) {
+                                val cellIndex = cell.row * gridSize + cell.col
+                                parsedColorMap[cellIndex] = getOriginalPixelColor(cell.row, cell.col)
+                            }
+                            android.util.Log.d("PaintCanvas", "✨ parsedColorMap 업데이트 완료: ${cells.size}개 셀")
+                        }
+
+                        isImageLoading = false
+                        android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
+                        invalidate()
+                    } catch (e: Exception) {
+                        android.util.Log.e("PaintCanvas", "❌ UI 업데이트 오류: ${e.message}")
+                        isImageLoading = false
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PaintCanvas", "❌ 이미지 로드 오류: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    isImageLoading = false
+                    invalidate()
+                }
             }
         }
     }
@@ -1291,17 +1306,24 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // ⚡ 남은 이벤트 즉시 처리 (터치 종료 시 또는 타이머 만료 시)
     private fun flushPendingEvents() {
-        // 타이머 취소
-        batchEventRunnable?.let { removeCallbacks(it) }
-        batchEventRunnable = null
+        try {
+            // 타이머 취소
+            batchEventRunnable?.let { removeCallbacks(it) }
+            batchEventRunnable = null
 
-        if (pendingPaintEvents.isEmpty()) return
+            if (pendingPaintEvents.isEmpty()) return
 
-        // JS 이벤트 배치 전송 (UI는 이미 업데이트됨)
-        for ((r, c, correct) in pendingPaintEvents) {
-            sendCellPaintedEvent(r, c, correct)
+            // ⚡ 리스트 복사 후 순회 (ConcurrentModificationException 방지)
+            val eventsCopy = pendingPaintEvents.toList()
+            pendingPaintEvents.clear()
+
+            // JS 이벤트 배치 전송 (UI는 이미 업데이트됨)
+            for ((r, c, correct) in eventsCopy) {
+                sendCellPaintedEvent(r, c, correct)
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ flushPendingEvents 오류: ${e.message}")
         }
-        pendingPaintEvents.clear()
     }
 
     private fun applyBoundaries() {
@@ -1360,6 +1382,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
     // ⚠️ 안전성: LinkedHashMap + recycle 조합은 recycled bitmap 크래시 유발
     // 대신 단순 HashMap 사용 (색상 수는 보통 20개 미만으로 메모리 문제 없음)
+    // ⚠️ 캐시 크기 제한: 최대 30개 색상까지만 캐시 (OOM 방지)
+    private val MAX_TEXTURE_CACHE_SIZE = 30
     private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
 
     private var textureDebugLogged = false
@@ -1389,6 +1413,16 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
+            }
+
+            // ⚠️ 캐시 크기 제한 (OOM 방지)
+            if (filledCellTextureCache.size >= MAX_TEXTURE_CACHE_SIZE && !filledCellTextureCache.containsKey(color)) {
+                // 가장 오래된 항목 제거
+                val oldestKey = filledCellTextureCache.keys.firstOrNull()
+                if (oldestKey != null) {
+                    filledCellTextureCache.remove(oldestKey)
+                    tiledShaderCache.remove(oldestKey)
+                }
             }
 
             // ⚡ 캐시에서 색상별 타일링 셰이더 가져오기
@@ -1481,8 +1515,21 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      */
     private fun createColoredTexture(pattern: Bitmap, color: Int): Bitmap {
         try {
+            // ⚠️ 안전 체크: recycled 비트맵 접근 방지
+            if (pattern.isRecycled) {
+                val fallback = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                fallback.eraseColor(color)
+                return fallback
+            }
+
             // 정사각형으로 보정된 패턴 사용 (비율 왜곡 방지)
             val squarePattern = getSquarePattern(pattern)
+            if (squarePattern.isRecycled) {
+                val fallback = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                fallback.eraseColor(color)
+                return fallback
+            }
+
             val size = squarePattern.width
             val totalPixels = size * size
             val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -1589,30 +1636,36 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private fun drawUnfilledCellWithShadow(canvas: Canvas, left: Float, top: Float, size: Float, row: Int, col: Int) {
         val bitmap = originalBitmap ?: backgroundBitmap
 
-        if (bitmap != null) {
-            // 1단계: 원본 이미지 영역 그리기
-            val srcCellWidth = bitmap.width.toFloat() / gridSize
-            val srcCellHeight = bitmap.height.toFloat() / gridSize
+        // ⚠️ 안전 체크: bitmap이 null이거나 recycled면 흰색 배경
+        if (bitmap != null && !bitmap.isRecycled) {
+            try {
+                // 1단계: 원본 이미지 영역 그리기
+                val srcCellWidth = bitmap.width.toFloat() / gridSize
+                val srcCellHeight = bitmap.height.toFloat() / gridSize
 
-            val srcLeft = (col * srcCellWidth).toInt()
-            val srcTop = (row * srcCellHeight).toInt()
-            val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
-            val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
+                val srcLeft = (col * srcCellWidth).toInt()
+                val srcTop = (row * srcCellHeight).toInt()
+                val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
+                val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
 
-            reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
-            reusableDstRect.set(left, top, left + size, top + size)
+                reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
+                reusableDstRect.set(left, top, left + size, top + size)
 
-            canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
+                canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
 
-            // 2단계: 반투명 흰색 오버레이 (음영만 살짝 보이게)
-            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, shadowOverlayPaint)
+                // 2단계: 반투명 흰색 오버레이 (음영만 살짝 보이게)
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, shadowOverlayPaint)
 
-            if (!shadowDrawnLogOnce) {
-                android.util.Log.d("PaintCanvas", "🎨 미색칠 셀 음영 표시 활성화")
-                shadowDrawnLogOnce = true
+                if (!shadowDrawnLogOnce) {
+                    android.util.Log.d("PaintCanvas", "🎨 미색칠 셀 음영 표시 활성화")
+                    shadowDrawnLogOnce = true
+                }
+            } catch (e: Exception) {
+                // 오류 시 흰색 배경으로 폴백
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, backgroundClearPaint)
             }
         } else {
-            // 비트맵 없으면 흰색 배경
+            // 비트맵 없거나 recycled면 흰색 배경
             canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, backgroundClearPaint)
         }
     }
@@ -1623,36 +1676,43 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var originalDrawnLogOnce = false
     private fun drawOriginalImageCell(canvas: Canvas, left: Float, top: Float, size: Float) {
         val bitmap = originalBitmap ?: backgroundBitmap
-        if (bitmap == null) {
-            // Fallback: 회색으로 채우기
+
+        // ⚠️ 안전 체크: bitmap이 null이거나 recycled면 회색 폴백
+        if (bitmap == null || bitmap.isRecycled) {
             reusableBgPaint.color = Color.LTGRAY
             canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
             return
         }
 
-        // 캔버스 좌표에서 row/col 역계산
-        val row = (top / cellSize).toInt()
-        val col = (left / cellSize).toInt()
+        try {
+            // 캔버스 좌표에서 row/col 역계산
+            val row = (top / cellSize).toInt()
+            val col = (left / cellSize).toInt()
 
-        // 원본 이미지에서 해당 셀의 영역 계산
-        val srcCellWidth = bitmap.width.toFloat() / gridSize
-        val srcCellHeight = bitmap.height.toFloat() / gridSize
+            // 원본 이미지에서 해당 셀의 영역 계산
+            val srcCellWidth = bitmap.width.toFloat() / gridSize
+            val srcCellHeight = bitmap.height.toFloat() / gridSize
 
-        val srcLeft = (col * srcCellWidth).toInt()
-        val srcTop = (row * srcCellHeight).toInt()
-        val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
-        val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
+            val srcLeft = (col * srcCellWidth).toInt()
+            val srcTop = (row * srcCellHeight).toInt()
+            val srcRight = ((col + 1) * srcCellWidth).toInt().coerceAtMost(bitmap.width)
+            val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
 
-        // 소스 영역과 대상 영역 설정
-        reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
-        reusableDstRect.set(left, top, left + size, top + size)
+            // 소스 영역과 대상 영역 설정
+            reusableSrcRect.set(srcLeft, srcTop, srcRight, srcBottom)
+            reusableDstRect.set(left, top, left + size, top + size)
 
-        // 원본 이미지의 해당 영역을 그대로 복사
-        canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
+            // 원본 이미지의 해당 영역을 그대로 복사
+            canvas.drawBitmap(bitmap, reusableSrcRect, reusableDstRect, reusableBitmapPaint)
 
-        if (!originalDrawnLogOnce) {
-            android.util.Log.d("PaintCanvas", "✨ ORIGINAL 모드: 원본 이미지 영역 복사 (${srcLeft},${srcTop})-(${srcRight},${srcBottom})")
-            originalDrawnLogOnce = true
+            if (!originalDrawnLogOnce) {
+                android.util.Log.d("PaintCanvas", "✨ ORIGINAL 모드: 원본 이미지 영역 복사 (${srcLeft},${srcTop})-(${srcRight},${srcBottom})")
+                originalDrawnLogOnce = true
+            }
+        } catch (e: Exception) {
+            // 오류 시 회색으로 폴백
+            reusableBgPaint.color = Color.LTGRAY
+            canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
         }
     }
 
@@ -1660,21 +1720,32 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val reusableHsv = FloatArray(3)
 
     private fun applyTextureToOriginalImage(original: Bitmap, pattern: Bitmap): Bitmap {
-        val result = Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(result)
-
-        // 1. 원본 이미지 그리기
-        canvas.drawBitmap(original, 0f, 0f, null)
-
-        // 2. 텍스처를 타일링하여 반투명 오버레이 (15% 강도로 은은하게)
-        val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = BitmapShader(pattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-            alpha = 40  // 15% 투명도 - 원본 색상 유지하면서 텍스처만 살짝
+        // ⚠️ 안전 체크: recycled 비트맵 접근 방지
+        if (original.isRecycled || pattern.isRecycled) {
+            android.util.Log.e("PaintCanvas", "❌ applyTextureToOriginalImage: recycled bitmap")
+            return original
         }
-        canvas.drawRect(0f, 0f, original.width.toFloat(), original.height.toFloat(), texturePaint)
 
-        android.util.Log.d("PaintCanvas", "✨ Pre-baked 텍스처 적용 완료: ${original.width}x${original.height}")
-        return result
+        return try {
+            val result = Bitmap.createBitmap(original.width, original.height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(result)
+
+            // 1. 원본 이미지 그리기
+            canvas.drawBitmap(original, 0f, 0f, null)
+
+            // 2. 텍스처를 타일링하여 반투명 오버레이 (15% 강도로 은은하게)
+            val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = BitmapShader(pattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+                alpha = 40  // 15% 투명도 - 원본 색상 유지하면서 텍스처만 살짝
+            }
+            canvas.drawRect(0f, 0f, original.width.toFloat(), original.height.toFloat(), texturePaint)
+
+            android.util.Log.d("PaintCanvas", "✨ Pre-baked 텍스처 적용 완료: ${original.width}x${original.height}")
+            result
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ applyTextureToOriginalImage 오류: ${e.message}")
+            original  // 오류 시 원본 반환
+        }
     }
 
     /**
@@ -1732,15 +1803,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private fun getOriginalPixelColor(row: Int, col: Int): Int {
         val bitmap = backgroundBitmap ?: return Color.GRAY
 
-        // 원본 이미지에서 해당 셀의 중심점 계산
-        val srcCellWidth = bitmap.width.toFloat() / gridSize
-        val srcCellHeight = bitmap.height.toFloat() / gridSize
+        // ⚠️ 안전 체크: recycled 비트맵 접근 방지
+        if (bitmap.isRecycled) return Color.GRAY
 
-        val centerX = (col * srcCellWidth + srcCellWidth / 2f).toInt().coerceIn(0, bitmap.width - 1)
-        val centerY = (row * srcCellHeight + srcCellHeight / 2f).toInt().coerceIn(0, bitmap.height - 1)
+        return try {
+            // 원본 이미지에서 해당 셀의 중심점 계산
+            val srcCellWidth = bitmap.width.toFloat() / gridSize
+            val srcCellHeight = bitmap.height.toFloat() / gridSize
 
-        // 중심점의 픽셀 색상 반환
-        return bitmap.getPixel(centerX, centerY)
+            val centerX = (col * srcCellWidth + srcCellWidth / 2f).toInt().coerceIn(0, bitmap.width - 1)
+            val centerY = (row * srcCellHeight + srcCellHeight / 2f).toInt().coerceIn(0, bitmap.height - 1)
+
+            // 중심점의 픽셀 색상 반환
+            bitmap.getPixel(centerX, centerY)
+        } catch (e: Exception) {
+            Color.GRAY
+        }
     }
 
     /**
