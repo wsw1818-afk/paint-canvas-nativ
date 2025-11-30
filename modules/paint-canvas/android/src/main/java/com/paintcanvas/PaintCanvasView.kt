@@ -1402,6 +1402,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var cachedTileScale = 0f
     private var lastCellSizeForTile = 0f
 
+    // 🎨 PorterDuff 방식: 단일 텍스처 + ColorFilter (캐시 불필요, OOM 방지)
+    private var baseTextureShader: BitmapShader? = null
+    private val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         try {
             // ✨ 완성 모드에 따라 다른 렌더링 적용
@@ -1411,57 +1415,47 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 return
             }
 
-            // WEAVE 모드: 타일링 텍스처 합성
+            // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
             val pattern = filledCellPatternBitmap
             if (pattern == null || pattern.isRecycled) {
-                // 패턴 없거나 recycled면 단색 폴백
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
             }
 
-            // ⚠️ 캐시 크기 제한 (OOM 방지)
-            if (filledCellTextureCache.size >= MAX_TEXTURE_CACHE_SIZE && !filledCellTextureCache.containsKey(color)) {
-                // 가장 오래된 항목 제거
-                val oldestKey = filledCellTextureCache.keys.firstOrNull()
-                if (oldestKey != null) {
-                    filledCellTextureCache.remove(oldestKey)
-                    tiledShaderCache.remove(oldestKey)
-                }
-            }
+            // 1단계: 색상 배경 먼저 그리기
+            reusableBgPaint.color = color
+            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
 
-            // ⚡ 캐시에서 색상별 타일링 셰이더 가져오기
-            val shader = tiledShaderCache.getOrPut(color) {
-                val texturedBitmap = filledCellTextureCache.getOrPut(color) {
-                    createColoredTexture(pattern, color)
-                }
-                // 비트맵이 유효한지 확인
-                if (texturedBitmap.isRecycled) {
-                    filledCellTextureCache.remove(color)
-                    return  // 단색 폴백으로 돌아감
-                }
-                BitmapShader(texturedBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-            }
-
-            // ⚡ 성능: 타일 스케일이 변경되지 않았으면 재계산 스킵
-            if (size != lastCellSizeForTile) {
-                lastCellSizeForTile = size
-                val squarePattern = squarePatternBitmap ?: pattern
+            // 2단계: 텍스처를 반투명 오버레이로 그리기 (명암만 추가)
+            if (baseTextureShader == null) {
+                val squarePattern = getSquarePattern(pattern)
                 if (!squarePattern.isRecycled) {
-                    val patternSize = squarePattern.width.toFloat()
-                    cachedTileScale = if (patternSize > 0) size / patternSize else 1f
+                    baseTextureShader = BitmapShader(squarePattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
                 }
             }
 
-            // ⚡ 성능: 매번 Matrix 재설정 대신 간단한 translate만 (패턴은 고정 스케일)
-            shaderMatrix.setScale(cachedTileScale, cachedTileScale)
-            shaderMatrix.postTranslate(left, top)
-            shader.setLocalMatrix(shaderMatrix)
+            baseTextureShader?.let { shader ->
+                // 타일 스케일 계산
+                if (size != lastCellSizeForTile) {
+                    lastCellSizeForTile = size
+                    val squarePattern = squarePatternBitmap
+                    if (squarePattern != null && !squarePattern.isRecycled) {
+                        cachedTileScale = size / squarePattern.width.toFloat()
+                    }
+                }
 
-            tiledPaint.shader = shader
-            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, tiledPaint)
+                shaderMatrix.setScale(cachedTileScale, cachedTileScale)
+                shaderMatrix.postTranslate(left, top)
+                shader.setLocalMatrix(shaderMatrix)
+
+                // 텍스처를 30% 알파로 오버레이 (명암 효과)
+                texturePaint.shader = shader
+                texturePaint.alpha = 77  // 30% 투명도
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, texturePaint)
+                texturePaint.alpha = 255  // 리셋
+            }
         } catch (e: Exception) {
-            // 오류 시 단색 폴백
             reusableBgPaint.color = color
             canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
         }
