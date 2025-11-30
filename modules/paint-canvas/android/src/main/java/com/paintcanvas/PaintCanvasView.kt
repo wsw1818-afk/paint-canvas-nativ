@@ -477,7 +477,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         // Semi-transparent gray overlay for selected label cells
-        color = Color.parseColor("#80808080") // 50% opacity dark gray
+        color = Color.parseColor("#80505050") // 50% opacity darker gray
     }
 
     private val backgroundClearPaint = Paint().apply {
