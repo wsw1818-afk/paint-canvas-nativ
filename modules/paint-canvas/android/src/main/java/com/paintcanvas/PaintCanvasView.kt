@@ -40,8 +40,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // 🔄 자동 저장용 SharedPreferences
     private val prefs: SharedPreferences = context.getSharedPreferences("PaintCanvasProgress", Context.MODE_PRIVATE)
     private var currentGameId: String? = null
-    private var saveJob: Job? = null
-    private var saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var gridSize: Int = 60
     private var cells: List<CellData> = emptyList()
@@ -1245,28 +1243,35 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     private fun flushPendingEventsWithColor() {
-        batchEventRunnable?.let { removeCallbacks(it) }
-        batchEventRunnable = null
+        try {
+            batchEventRunnable?.let { removeCallbacks(it) }
+            batchEventRunnable = null
 
-        if (pendingPaintEventsWithColor.isEmpty()) return
+            if (pendingPaintEventsWithColor.isEmpty()) return
 
-        // ⚡ 배치로 String 맵 업데이트 및 JS 이벤트 전송
-        for (event in pendingPaintEventsWithColor) {
-            val cellKey = "${event.row}-${event.col}"
-            if (event.isCorrect) {
-                filledCells.add(cellKey)
-                paintedColorMap[cellKey] = selectedColorHex
-            } else {
-                wrongPaintedCells.add(cellKey)
-                filledCells.add(cellKey)
-                paintedColorMap[cellKey] = selectedColorHex
+            // ⚡ 리스트 복사 후 순회 (ConcurrentModificationException 방지)
+            val eventsCopy = pendingPaintEventsWithColor.toList()
+            pendingPaintEventsWithColor.clear()
+
+            // ⚡ 배치로 String 맵 업데이트 및 JS 이벤트 전송
+            for (event in eventsCopy) {
+                val cellKey = "${event.row}-${event.col}"
+                if (event.isCorrect) {
+                    filledCells.add(cellKey)
+                    paintedColorMap[cellKey] = selectedColorHex
+                } else {
+                    wrongPaintedCells.add(cellKey)
+                    filledCells.add(cellKey)
+                    paintedColorMap[cellKey] = selectedColorHex
+                }
+                sendCellPaintedEvent(event.row, event.col, event.isCorrect)
             }
-            sendCellPaintedEvent(event.row, event.col, event.isCorrect)
-        }
-        pendingPaintEventsWithColor.clear()
 
-        // 🔄 배치 처리 완료 후 한 번만 저장 (디바운스 적용)
-        saveProgressToPrefs()
+            // 🔄 배치 처리 완료 후 한 번만 저장 (디바운스 적용)
+            saveProgressToPrefs()
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ flushPendingEventsWithColor 오류: ${e.message}")
+        }
     }
 
     // ⚡ JS 이벤트만 큐에 추가 (invalidate는 handlePainting에서 한 번만)
@@ -1352,22 +1357,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
-    // 색칠된 셀 텍스처 캐시 (색상별로 캐싱) - 최대 50개로 제한하여 메모리 관리
-    private val filledCellTextureCache = object : LinkedHashMap<Int, Bitmap>(50, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Bitmap>?): Boolean {
-            if (size > 50) {
-                eldest?.value?.recycle()  // 오래된 비트맵 해제
-                tiledShaderCache.remove(eldest?.key)  // 연관된 셰이더도 제거
-                return true
-            }
-            return false
-        }
-    }
+    // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
+    // ⚠️ 안전성: LinkedHashMap + recycle 조합은 recycled bitmap 크래시 유발
+    // 대신 단순 HashMap 사용 (색상 수는 보통 20개 미만으로 메모리 문제 없음)
+    private val filledCellTextureCache = mutableMapOf<Int, Bitmap>()
 
     private var textureDebugLogged = false
 
-    // 🎨 타일링용 BitmapShader 캐시 (색상별) - 최대 50개
-    private val tiledShaderCache = LinkedHashMap<Int, BitmapShader>(50, 0.75f, true)
+    // 🎨 타일링용 BitmapShader 캐시 (색상별)
+    private val tiledShaderCache = mutableMapOf<Int, BitmapShader>()
     private val tiledPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val shaderMatrix = Matrix()
 
@@ -1376,49 +1374,58 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var lastCellSizeForTile = 0f
 
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
-        // ✨ 완성 모드에 따라 다른 렌더링 적용
-        if (completionMode == "ORIGINAL") {
-            // ORIGINAL 모드: 원본 이미지 영역 복사
-            drawOriginalImageCell(canvas, left, top, size)
-            return
-        }
-
-        // WEAVE 모드: 타일링 텍스처 합성
-        val pattern = filledCellPatternBitmap
-        if (pattern == null) {
-            // 패턴 없으면 단색 폴백
-            if (!textureDebugLogged) {
-                android.util.Log.e("PaintCanvas", "❌ filledCellPatternBitmap is NULL - falling back to solid color")
-                textureDebugLogged = true
+        try {
+            // ✨ 완성 모드에 따라 다른 렌더링 적용
+            if (completionMode == "ORIGINAL") {
+                // ORIGINAL 모드: 원본 이미지 영역 복사
+                drawOriginalImageCell(canvas, left, top, size)
+                return
             }
+
+            // WEAVE 모드: 타일링 텍스처 합성
+            val pattern = filledCellPatternBitmap
+            if (pattern == null || pattern.isRecycled) {
+                // 패턴 없거나 recycled면 단색 폴백
+                reusableBgPaint.color = color
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
+                return
+            }
+
+            // ⚡ 캐시에서 색상별 타일링 셰이더 가져오기
+            val shader = tiledShaderCache.getOrPut(color) {
+                val texturedBitmap = filledCellTextureCache.getOrPut(color) {
+                    createColoredTexture(pattern, color)
+                }
+                // 비트맵이 유효한지 확인
+                if (texturedBitmap.isRecycled) {
+                    filledCellTextureCache.remove(color)
+                    return  // 단색 폴백으로 돌아감
+                }
+                BitmapShader(texturedBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+            }
+
+            // ⚡ 성능: 타일 스케일이 변경되지 않았으면 재계산 스킵
+            if (size != lastCellSizeForTile) {
+                lastCellSizeForTile = size
+                val squarePattern = squarePatternBitmap ?: pattern
+                if (!squarePattern.isRecycled) {
+                    val patternSize = squarePattern.width.toFloat()
+                    cachedTileScale = if (patternSize > 0) size / patternSize else 1f
+                }
+            }
+
+            // ⚡ 성능: 매번 Matrix 재설정 대신 간단한 translate만 (패턴은 고정 스케일)
+            shaderMatrix.setScale(cachedTileScale, cachedTileScale)
+            shaderMatrix.postTranslate(left, top)
+            shader.setLocalMatrix(shaderMatrix)
+
+            tiledPaint.shader = shader
+            canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, tiledPaint)
+        } catch (e: Exception) {
+            // 오류 시 단색 폴백
             reusableBgPaint.color = color
             canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
-            return
         }
-
-        // ⚡ 캐시에서 색상별 타일링 셰이더 가져오기
-        val shader = tiledShaderCache.getOrPut(color) {
-            val texturedBitmap = filledCellTextureCache.getOrPut(color) {
-                createColoredTexture(pattern, color)
-            }
-            BitmapShader(texturedBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-        }
-
-        // ⚡ 성능: 타일 스케일이 변경되지 않았으면 재계산 스킵
-        if (size != lastCellSizeForTile) {
-            lastCellSizeForTile = size
-            val squarePattern = squarePatternBitmap ?: pattern
-            val patternSize = squarePattern.width.toFloat()
-            cachedTileScale = size / patternSize
-        }
-
-        // ⚡ 성능: 매번 Matrix 재설정 대신 간단한 translate만 (패턴은 고정 스케일)
-        shaderMatrix.setScale(cachedTileScale, cachedTileScale)
-        shaderMatrix.postTranslate(left, top)
-        shader.setLocalMatrix(shaderMatrix)
-
-        tiledPaint.shader = shader
-        canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, tiledPaint)
     }
 
     // 재사용 가능한 RectF (매 프레임 객체 생성 방지)
@@ -1925,9 +1932,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             if (!imageLoadScope.isActive) {
                 imageLoadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
             }
-            if (!saveScope.isActive) {
-                saveScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-            }
             android.util.Log.d("PaintCanvas", "✅ View attached, coroutine scopes ready")
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ onAttachedToWindow 오류: ${e.message}")
@@ -1938,12 +1942,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         try {
-            // 즉시 저장 (비동기 저장 취소하고 동기적으로 저장)
-            saveJob?.cancel()
+            // 마지막 진행 상황 저장 (동기)
             saveProgressToPrefsSync()
             // 스코프 취소 (재연결 시 onAttachedToWindow에서 재생성)
             imageLoadScope.cancel()
-            saveScope.cancel()
             android.util.Log.d("PaintCanvas", "🧹 View detached, progress saved, coroutine scopes cancelled")
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ onDetachedFromWindow 오류: ${e.message}")
@@ -1998,31 +2000,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     /**
-     * 진행 상황을 SharedPreferences에 저장 (디바운스 적용)
+     * 진행 상황을 SharedPreferences에 저장 (즉시 저장)
+     * ⚠️ 앱 종료 시 저장 유실 방지를 위해 디바운스 제거
      */
     private fun saveProgressToPrefs() {
         try {
-            val gameId = currentGameId ?: return
-            if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
-
-            // 기존 저장 작업 취소
-            saveJob?.cancel()
-
-            // 스코프가 활성 상태가 아니면 동기적으로 저장
-            if (!saveScope.isActive) {
-                saveProgressToPrefsSync()
-                return
-            }
-
-            // 1초 디바운스로 저장 (너무 자주 저장 방지)
-            saveJob = saveScope.launch {
-                delay(1000)
-                saveProgressToPrefsSync()
-            }
+            saveProgressToPrefsSync()
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ saveProgressToPrefs 오류: ${e.message}")
-            // 폴백: 동기적으로 저장 시도
-            try { saveProgressToPrefsSync() } catch (_: Exception) {}
         }
     }
 
@@ -2043,8 +2028,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 put("timestamp", System.currentTimeMillis())
             }
 
-            prefs.edit().putString(gameId, data.toString()).apply()
-            android.util.Log.d("PaintCanvas", "💾 진행 상황 저장: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size})")
+            // ⚠️ commit() 사용: 동기 저장으로 앱 종료 시에도 확실히 저장
+            val success = prefs.edit().putString(gameId, data.toString()).commit()
+            if (success) {
+                android.util.Log.d("PaintCanvas", "💾 진행 상황 저장 완료: $gameId (filled=${filledCells.size}, wrong=${wrongPaintedCells.size})")
+            } else {
+                android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: commit() returned false")
+            }
 
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: ${e.message}")
