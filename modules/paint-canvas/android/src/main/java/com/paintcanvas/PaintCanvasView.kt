@@ -1370,16 +1370,57 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private fun loadBitmap(uriString: String): Bitmap? {
         return try {
             val uri = Uri.parse(uriString)
-            val inputStream = context.contentResolver.openInputStream(uri)
-            BitmapFactory.decodeStream(inputStream)?.let { bitmap ->
-                // Keep original bitmap - will be scaled in onDraw() using canvasWidth
-                // DO NOT hardcode 600x600!
-                bitmap
+
+            // 🔧 OOM 방지: 대형 그리드(100+)에서는 이미지 크기 제한
+            val maxSize = if (gridSize >= 100) 512 else 1024
+
+            // 1단계: 이미지 크기만 먼저 확인
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            }
+
+            // 2단계: 샘플링 비율 계산
+            val sampleSize = calculateInSampleSize(options.outWidth, options.outHeight, maxSize)
+
+            // 3단계: 샘플링된 이미지 로드
+            val loadOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+            }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, loadOptions)
+            }?.let { bitmap ->
+                // 최종 크기 조정 (maxSize 이하로)
+                if (bitmap.width > maxSize || bitmap.height > maxSize) {
+                    val scale = maxSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+                    val newWidth = (bitmap.width * scale).toInt()
+                    val newHeight = (bitmap.height * scale).toInt()
+                    val scaled = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+                    if (scaled != bitmap) bitmap.recycle()
+                    android.util.Log.d("PaintCanvas", "🔧 이미지 축소: ${options.outWidth}x${options.outHeight} → ${newWidth}x${newHeight}")
+                    scaled
+                } else {
+                    bitmap
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
+    }
+
+    private fun calculateInSampleSize(width: Int, height: Int, maxSize: Int): Int {
+        var inSampleSize = 1
+        if (width > maxSize || height > maxSize) {
+            val halfWidth = width / 2
+            val halfHeight = height / 2
+            while ((halfWidth / inSampleSize) >= maxSize && (halfHeight / inSampleSize) >= maxSize) {
+                inSampleSize *= 2
+            }
+        }
+        return inSampleSize
     }
 
     // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
