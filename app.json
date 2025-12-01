@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ColorPlayExpo",
+    "name": "Photo Color",
     "slug": "ColorPlayExpo",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,7 +23,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#E8F5E9"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.wisangwon.ColorPlayExpo",
