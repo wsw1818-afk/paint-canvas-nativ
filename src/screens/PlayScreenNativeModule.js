@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert, Image, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PaintCanvasView, captureCanvas, captureThumbnail } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -8,6 +8,9 @@ import { updatePuzzle } from '../utils/puzzleStorage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// 🖼️ 로딩 화면 이미지
+const loadingImage = require('../../assets/loading-image.png');
 
 // ⚡ 최적화: 색상 버튼 컴포넌트 분리 (memo로 불필요한 리렌더링 방지)
 const ColorButton = memo(({ color, isSelected, onSelect, luminance }) => {
@@ -788,11 +791,15 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       {/* 🚀 로딩 오버레이 - Native 캔버스의 첫 렌더링 완료까지 표시 */}
       {!isNativeReady && (
         <View style={styles.loadingOverlay}>
-          <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#40E0D0" />
-            <Text style={styles.loadingText}>
-              {!isCellsReady ? '퍼즐 생성 중...' : '캔버스 준비 중...'}
-            </Text>
+          <StatusBar barStyle="light-content" backgroundColor="#000000" translucent />
+          <Image
+            source={loadingImage}
+            style={styles.loadingFullImage}
+            resizeMode="contain"
+          />
+          <View style={styles.loadingStatusContainer}>
+            <ActivityIndicator size="large" color="#1DB954" />
+            <Text style={styles.loadingStatusText}>캔버스 준비 중...</Text>
           </View>
         </View>
       )}
@@ -1111,21 +1118,24 @@ const styles = StyleSheet.create({
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: SpotifyColors.overlay,
+    backgroundColor: '#000000',
+    zIndex: 100,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 100,
   },
-  loadingBox: {
+  loadingFullImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * 0.7,
+  },
+  loadingStatusContainer: {
+    position: 'absolute',
+    bottom: SCREEN_HEIGHT * 0.15,
     alignItems: 'center',
-    padding: SpotifySpacing.xxl,
-    backgroundColor: SpotifyColors.backgroundElevated,
-    borderRadius: SpotifyRadius.lg,
   },
-  loadingText: {
-    fontSize: SpotifyFonts.md,
-    fontWeight: SpotifyFonts.semiBold,
-    color: SpotifyColors.primary,
-    marginTop: SpotifySpacing.base,
+  loadingStatusText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 12,
+    fontWeight: '500',
   },
 });

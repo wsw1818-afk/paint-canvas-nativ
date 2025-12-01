@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, ActivityIndicator, ScrollView, StatusBar, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, ActivityIndicator, ScrollView, StatusBar, Platform, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
@@ -8,6 +8,9 @@ import { processImage } from '../utils/imageProcessor';
 import { savePuzzle } from '../utils/puzzleStorage';
 import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const loadingImage = require('../../assets/loading-image.png');
 
 const DIFFICULTIES = [
   { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: SpotifyColors.primary },
@@ -263,6 +266,24 @@ export default function GenerateScreen({ route, navigation }) {
     }
   };
 
+  // 퍼즐 생성 중 로딩 화면
+  if (loading && selectedImage) {
+    return (
+      <View style={styles.loadingOverlay}>
+        <StatusBar barStyle="light-content" backgroundColor="#000000" translucent />
+        <Image
+          source={loadingImage}
+          style={styles.loadingFullImage}
+          resizeMode="contain"
+        />
+        <View style={styles.loadingStatusContainer}>
+          <ActivityIndicator size="large" color="#1DB954" />
+          <Text style={styles.loadingStatusText}>퍼즐 생성 중...</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={SpotifyColors.background} />
@@ -408,6 +429,27 @@ export default function GenerateScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
+  loadingOverlay: {
+    flex: 1,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingFullImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT * 0.7,
+  },
+  loadingStatusContainer: {
+    position: 'absolute',
+    bottom: SCREEN_HEIGHT * 0.15,
+    alignItems: 'center',
+  },
+  loadingStatusText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 12,
+    fontWeight: '500',
+  },
   container: {
     flex: 1,
     backgroundColor: SpotifyColors.background,
