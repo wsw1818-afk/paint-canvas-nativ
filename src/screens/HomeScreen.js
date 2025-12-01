@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ImageBackground, StatusBar } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { migratePuzzles } from '../utils/puzzleStorage';
+import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
 export default function HomeScreen({ navigation }) {
   // 앱 시작 시 기존 퍼즐 마이그레이션 (백그라운드 실행)
@@ -22,9 +23,9 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor={SpotifyColors.background} />
       <LinearGradient
-        colors={['#87CEEB', '#40E0D0', '#20B2AA']}
+        colors={[SpotifyColors.backgroundElevated, SpotifyColors.background]}
         style={styles.gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 1 }}
@@ -40,38 +41,60 @@ export default function HomeScreen({ navigation }) {
           <View style={styles.content}>
             {/* Gallery View Button */}
             <TouchableOpacity
-              style={[styles.button, styles.galleryButton]}
+              style={styles.button}
               onPress={() => navigation.navigate('Gallery')}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
             >
-              <View style={styles.buttonInner}>
-                <Text style={styles.buttonIcon}>🖼️</Text>
-                <View style={styles.buttonTextContainer}>
-                  <Text style={styles.buttonText}>갤러리</Text>
-                  <Text style={styles.buttonSubtext}>격자 적용된 사진 보기</Text>
+              <LinearGradient
+                colors={[SpotifyColors.backgroundElevated, SpotifyColors.backgroundLight]}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <View style={styles.buttonInner}>
+                  <View style={[styles.iconContainer, { backgroundColor: SpotifyColors.primary }]}>
+                    <Text style={styles.buttonIcon}>🖼️</Text>
+                  </View>
+                  <View style={styles.buttonTextContainer}>
+                    <Text style={styles.buttonText}>갤러리</Text>
+                    <Text style={styles.buttonSubtext}>격자 적용된 사진 보기</Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
                 </View>
-              </View>
+              </LinearGradient>
             </TouchableOpacity>
 
             {/* Create Puzzle Button */}
             <TouchableOpacity
-              style={[styles.button, styles.savedButton]}
+              style={styles.button}
               onPress={() => navigation.navigate('Generate', { sourceType: 'gallery' })}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
             >
-              <View style={styles.buttonInner}>
-                <Text style={styles.buttonIcon}>📂</Text>
-                <View style={styles.buttonTextContainer}>
-                  <Text style={styles.buttonText}>새 퍼즐 만들기</Text>
-                  <Text style={styles.buttonSubtext}>사진을 격자로 변환하기</Text>
+              <LinearGradient
+                colors={[SpotifyColors.backgroundElevated, SpotifyColors.backgroundLight]}
+                style={styles.buttonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <View style={styles.buttonInner}>
+                  <View style={[styles.iconContainer, { backgroundColor: SpotifyColors.primary }]}>
+                    <Text style={styles.buttonIcon}>➕</Text>
+                  </View>
+                  <View style={styles.buttonTextContainer}>
+                    <Text style={styles.buttonText}>새 퍼즐 만들기</Text>
+                    <Text style={styles.buttonSubtext}>사진을 격자로 변환하기</Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
                 </View>
-              </View>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
 
-          {/* Bottom decoration */}
-          <View style={styles.bottomDecoration}>
-            <Text style={styles.decorationText}>🏖️ 🌴 🍹</Text>
+          {/* Bottom branding */}
+          <View style={styles.bottomBranding}>
+            <View style={styles.brandingDot} />
+            <Text style={styles.brandingText}>Color your world</Text>
+            <View style={styles.brandingDot} />
           </View>
         </SafeAreaView>
       </LinearGradient>
@@ -82,6 +105,7 @@ export default function HomeScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: SpotifyColors.background,
   },
   gradient: {
     flex: 1,
@@ -90,76 +114,93 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingTop: 60,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
+    paddingTop: 80,
+    paddingHorizontal: SpotifySpacing.xl,
+    paddingBottom: 60,
     alignItems: 'center',
   },
   title: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 8,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 4,
+    fontSize: SpotifyFonts.display,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.primary,
+    marginBottom: SpotifySpacing.sm,
+    letterSpacing: -1,
   },
   subtitle: {
-    fontSize: 18,
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontWeight: '500',
+    fontSize: SpotifyFonts.md,
+    color: SpotifyColors.textSecondary,
+    fontWeight: SpotifyFonts.medium,
   },
   content: {
     flex: 1,
-    padding: 24,
+    paddingHorizontal: SpotifySpacing.base,
     justifyContent: 'center',
   },
   button: {
-    padding: 20,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    marginBottom: 20,
+    marginBottom: SpotifySpacing.base,
+    borderRadius: SpotifyRadius.lg,
+    overflow: 'hidden',
+    elevation: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
   },
-  galleryButton: {
-    borderLeftWidth: 5,
-    borderLeftColor: '#FF6B6B',
-  },
-  savedButton: {
-    borderLeftWidth: 5,
-    borderLeftColor: '#FFD93D',
+  buttonGradient: {
+    padding: SpotifySpacing.base,
+    borderRadius: SpotifyRadius.lg,
   },
   buttonInner: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  iconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: SpotifyRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: SpotifySpacing.base,
+  },
   buttonIcon: {
-    fontSize: 44,
-    marginRight: 16,
+    fontSize: 28,
   },
   buttonTextContainer: {
     flex: 1,
   },
   buttonText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#2C3E50',
+    fontSize: SpotifyFonts.lg,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
     marginBottom: 4,
   },
   buttonSubtext: {
-    fontSize: 14,
-    color: '#7F8C8D',
+    fontSize: SpotifyFonts.sm,
+    color: SpotifyColors.textSecondary,
   },
-  bottomDecoration: {
-    paddingBottom: 20,
+  chevron: {
+    fontSize: 28,
+    color: SpotifyColors.textSecondary,
+    fontWeight: '300',
+  },
+  bottomBranding: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: SpotifySpacing.xl,
+    gap: SpotifySpacing.sm,
   },
-  decorationText: {
-    fontSize: 32,
-    letterSpacing: 8,
+  brandingDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: SpotifyColors.primary,
+  },
+  brandingText: {
+    fontSize: SpotifyFonts.sm,
+    color: SpotifyColors.textMuted,
+    fontWeight: SpotifyFonts.medium,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
 });

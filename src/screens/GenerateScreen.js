@@ -1,23 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, Image, ActivityIndicator, ScrollView, StatusBar, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import { processImage } from '../utils/imageProcessor';
 import { savePuzzle } from '../utils/puzzleStorage';
 import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
+import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
 const DIFFICULTIES = [
-  { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: '#4CD964' },      // 120×120 = 14,400 셀, 16색
-  { id: 'NORMAL', name: '보통 (균형잡힌)', colors: 36, gridSize: 160, color: '#5AB9EA' },   // 160×160 = 25,600 셀, 36색
-  { id: 'HARD', name: '어려움 (사진처럼)', colors: 64, gridSize: 200, color: '#FF5757' },   // 200×200 = 40,000 셀, 64색 (2자리 라벨)
+  { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: SpotifyColors.primary },
+  { id: 'NORMAL', name: '보통 (균형잡힌)', colors: 36, gridSize: 160, color: SpotifyColors.warning },
+  { id: 'HARD', name: '어려움 (사진처럼)', colors: 64, gridSize: 200, color: SpotifyColors.error },
 ];
 
 // 완성 모드 옵션
 const COMPLETION_MODES = [
-  { id: 'ORIGINAL', name: '원본 이미지', desc: '완성 시 원본 사진이 나타남', icon: '🖼️', color: '#FF6B6B' },
+  { id: 'ORIGINAL', name: '원본 이미지', desc: '완성 시 원본 사진이 나타남', icon: '🖼️', color: SpotifyColors.primary },
   { id: 'WEAVE', name: '위빙 텍스처', desc: '완성 시 색칠한 그대로 유지', icon: '🧶', color: '#9B59B6' },
 ];
 
@@ -265,20 +265,18 @@ export default function GenerateScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <LinearGradient
-        colors={['#87CEEB', '#40E0D0', '#20B2AA']}
-        style={styles.gradient}
-      >
-        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Text style={styles.backButton}>← 뒤로</Text>
-            </TouchableOpacity>
-            <Text style={styles.title}>퍼즐 만들기</Text>
-            <Text style={styles.headerSubtitle}>나만의 색칠 퍼즐 생성</Text>
+      <StatusBar barStyle="light-content" backgroundColor={SpotifyColors.background} />
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+            <Text style={styles.backButton}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.title}>새 퍼즐 만들기</Text>
           </View>
+          <View style={styles.headerRight} />
+        </View>
 
           <ScrollView
             style={styles.scrollView}
@@ -404,8 +402,7 @@ export default function GenerateScreen({ route, navigation }) {
           </TouchableOpacity>
             </View>
           </ScrollView>
-        </SafeAreaView>
-      </LinearGradient>
+      </SafeAreaView>
     </View>
   );
 }
@@ -413,80 +410,87 @@ export default function GenerateScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  gradient: {
-    flex: 1,
+    backgroundColor: SpotifyColors.background,
   },
   safeArea: {
     flex: 1,
   },
   header: {
-    padding: 24,
-    paddingTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SpotifySpacing.base,
+    paddingVertical: SpotifySpacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: SpotifyColors.divider,
+  },
+  backButtonContainer: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backButton: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    marginBottom: 12,
-    fontWeight: '600',
+    fontSize: 32,
+    color: SpotifyColors.textPrimary,
+    fontWeight: '300',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerRight: {
+    width: 40,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: 4,
+    fontSize: SpotifyFonts.lg,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 32,
+    paddingBottom: SpotifySpacing.xxl,
   },
   imageSection: {
-    marginHorizontal: 20,
-    marginTop: 16,
+    marginHorizontal: SpotifySpacing.base,
+    marginTop: SpotifySpacing.base,
   },
   imagePicker: {
     height: 180,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 20,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderRadius: SpotifyRadius.lg,
     borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
+    borderColor: SpotifyColors.backgroundElevated,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
   },
   imagePickerIcon: {
     fontSize: 48,
-    marginBottom: 12,
+    marginBottom: SpotifySpacing.md,
   },
   imagePickerText: {
-    fontSize: 16,
-    color: '#2C3E50',
-    marginBottom: 8,
+    fontSize: SpotifyFonts.md,
+    color: SpotifyColors.textSecondary,
+    marginBottom: SpotifySpacing.sm,
   },
   imagePickerButton: {
-    fontSize: 14,
-    color: '#20B2AA',
-    fontWeight: 'bold',
+    fontSize: SpotifyFonts.base,
+    color: SpotifyColors.primary,
+    fontWeight: SpotifyFonts.bold,
   },
   loadingContainer: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#20B2AA',
-    fontWeight: '600',
+    marginTop: SpotifySpacing.md,
+    fontSize: SpotifyFonts.base,
+    color: SpotifyColors.primary,
+    fontWeight: SpotifyFonts.semiBold,
   },
   selectedImageContainer: {
     alignItems: 'center',
@@ -494,104 +498,90 @@ const styles = StyleSheet.create({
   selectedImage: {
     width: '100%',
     height: 250,
-    borderRadius: 20,
-    marginBottom: 12,
+    borderRadius: SpotifyRadius.lg,
+    marginBottom: SpotifySpacing.md,
   },
   changeImageButton: {
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#FF6B6B',
-    borderRadius: 12,
+    paddingHorizontal: SpotifySpacing.xl,
+    paddingVertical: SpotifySpacing.md,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.full,
   },
   changeImageText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+    color: SpotifyColors.textPrimary,
+    fontWeight: SpotifyFonts.bold,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: SpotifySpacing.base,
+    paddingTop: SpotifySpacing.base,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 16,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
+    marginBottom: SpotifySpacing.md,
   },
   difficultyCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 18,
-    marginBottom: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 16,
+    padding: SpotifySpacing.base,
+    marginBottom: SpotifySpacing.md,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderRadius: SpotifyRadius.lg,
     borderWidth: 2,
     borderColor: 'transparent',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
   difficultyCardSelected: {
     borderWidth: 2,
-    backgroundColor: 'rgba(255, 255, 255, 1)',
+    backgroundColor: SpotifyColors.backgroundElevated,
   },
   difficultyInfo: {
     flex: 1,
   },
   modeIcon: {
-    fontSize: 32,
-    marginRight: 12,
+    fontSize: 28,
+    marginRight: SpotifySpacing.md,
   },
   difficultyName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#2C3E50',
-    marginBottom: 4,
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
+    marginBottom: SpotifySpacing.xs,
   },
   difficultyDesc: {
-    fontSize: 13,
-    color: '#7F8C8D',
+    fontSize: SpotifyFonts.sm,
+    color: SpotifyColors.textSecondary,
   },
   checkmark: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkmarkText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: SpotifyColors.background,
+    fontSize: SpotifyFonts.base,
+    fontWeight: SpotifyFonts.bold,
   },
   buttonContainer: {
-    marginHorizontal: 20,
-    marginTop: 24,
-    marginBottom: 20,
+    marginHorizontal: SpotifySpacing.base,
+    marginTop: SpotifySpacing.xl,
+    marginBottom: SpotifySpacing.lg,
   },
   generateButton: {
-    padding: 18,
-    backgroundColor: '#FF6B6B',
-    borderRadius: 16,
+    padding: SpotifySpacing.base,
+    backgroundColor: SpotifyColors.primary,
+    borderRadius: SpotifyRadius.full,
     alignItems: 'center',
-    shadowColor: '#FF6B6B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
   },
   generateButtonDisabled: {
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    shadowOpacity: 0,
+    backgroundColor: SpotifyColors.backgroundElevated,
   },
   generateButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.background,
   },
 });

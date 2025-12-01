@@ -5,6 +5,7 @@ import { PaintCanvasView, captureCanvas, captureThumbnail } from 'paint-canvas-n
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
+import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -641,14 +642,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={styles.backButton}>← 뒤로</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+            <Text style={styles.backButton}>‹</Text>
           </TouchableOpacity>
 
           <View style={styles.headerCenter}>
             <View style={styles.scoreContainer}>
               <Text style={styles.coinIcon}>🪙</Text>
-              <Text style={styles.score}>+{score}</Text>
+              <Text style={styles.score}>{score}</Text>
             </View>
 
             {wrongCells.size > 0 && (
@@ -723,14 +724,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backButton}>← 뒤로</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+          <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
           <View style={styles.scoreContainer}>
             <Text style={styles.coinIcon}>🪙</Text>
-            <Text style={styles.score}>+{score}</Text>
+            <Text style={styles.score}>{score}</Text>
           </View>
 
           {/* 되돌리기 버튼 - 항상 표시 */}
@@ -823,24 +824,28 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1A3A4A',
+    backgroundColor: SpotifyColors.background,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#20B2AA',
-    borderBottomWidth: 0,
+    paddingHorizontal: SpotifySpacing.base,
+    paddingVertical: SpotifySpacing.sm,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderBottomWidth: 1,
+    borderBottomColor: SpotifyColors.divider,
+  },
+  backButtonContainer: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backButton: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '600',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
+    fontSize: 32,
+    color: SpotifyColors.textPrimary,
+    fontWeight: '300',
   },
   headerCenter: {
     flexDirection: 'row',
@@ -850,68 +855,50 @@ const styles = StyleSheet.create({
   scoreContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFD93D',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: SpotifyColors.primary,
+    paddingHorizontal: SpotifySpacing.base,
+    paddingVertical: SpotifySpacing.sm,
+    borderRadius: SpotifyRadius.full,
     gap: 6,
-    shadowColor: '#FFD93D',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-    elevation: 5,
   },
   undoButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF6B6B',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    backgroundColor: SpotifyColors.error,
+    paddingHorizontal: SpotifySpacing.md,
+    paddingVertical: SpotifySpacing.sm,
+    borderRadius: SpotifyRadius.full,
     gap: 4,
-    borderWidth: 2,
-    borderColor: '#FF5252',
-    shadowColor: '#FF6B6B',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-    elevation: 5,
   },
   undoButtonActive: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#45A049',
-    shadowColor: '#4CAF50',
+    backgroundColor: SpotifyColors.primary,
   },
   undoButtonDisabled: {
-    backgroundColor: '#555555',
-    borderColor: '#444444',
+    backgroundColor: SpotifyColors.backgroundElevated,
     opacity: 0.5,
   },
   undoIcon: {
     fontSize: 18,
   },
   undoCount: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    fontSize: SpotifyFonts.base,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
   },
   coinIcon: {
-    fontSize: 20,
+    fontSize: 18,
   },
   score: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1C1B1F',
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.background,
   },
   canvasContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 2,
-    backgroundColor: '#1A3A4A',
+    backgroundColor: SpotifyColors.background,
     overflow: 'hidden',
     minHeight: 0,
   },
@@ -925,12 +912,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   paletteContainer: {
-    paddingHorizontal: 6,
-    paddingTop: 8,
-    paddingBottom: 18,
-    backgroundColor: '#163040',
-    borderTopWidth: 2,
-    borderTopColor: '#20B2AA',
+    paddingHorizontal: SpotifySpacing.sm,
+    paddingTop: SpotifySpacing.sm,
+    paddingBottom: SpotifySpacing.base,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderTopWidth: 1,
+    borderTopColor: SpotifyColors.divider,
   },
   palette: {
     flexDirection: 'row',
@@ -1124,23 +1111,21 @@ const styles = StyleSheet.create({
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(26, 58, 74, 0.95)',
+    backgroundColor: SpotifyColors.overlay,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
   },
   loadingBox: {
     alignItems: 'center',
-    padding: 32,
-    backgroundColor: 'rgba(32, 178, 170, 0.2)',
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#40E0D0',
+    padding: SpotifySpacing.xxl,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.lg,
   },
   loadingText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#40E0D0',
-    marginTop: 16,
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.semiBold,
+    color: SpotifyColors.primary,
+    marginTop: SpotifySpacing.base,
   },
 });

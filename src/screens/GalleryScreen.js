@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, StatusBar, Alert, InteractionManager, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
@@ -110,27 +110,26 @@ export default function GalleryScreen({ navigation }) {
 
   const getDifficultyInfo = (colors, gridSize) => {
     // 난이도 판별: 색상 수 + 격자 크기로 구분
-    if (colors <= 16) return { name: '쉬움', color: '#4CD964' };      // 16색 이하 = 쉬움
-    if (colors > 36 || gridSize >= 200) return { name: '어려움', color: '#FF5757' };  // 36색 초과 또는 200×200 이상 = 어려움
-    return { name: '보통', color: '#5AB9EA' };                         // 그 외 = 보통
+    if (colors <= 16) return { name: '쉬움', color: SpotifyColors.primary };      // 16색 이하 = 쉬움
+    if (colors > 36 || gridSize >= 200) return { name: '어려움', color: SpotifyColors.error };  // 36색 초과 또는 200×200 이상 = 어려움
+    return { name: '보통', color: SpotifyColors.warning };                         // 그 외 = 보통
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <LinearGradient
-        colors={['#20B2AA', '#40E0D0', '#87CEEB']}
-        style={styles.gradient}
-      >
-        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Text style={styles.backButton}>← 뒤로</Text>
-            </TouchableOpacity>
+      <StatusBar barStyle="light-content" backgroundColor={SpotifyColors.background} />
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+            <Text style={styles.backButton}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
             <Text style={styles.title}>갤러리</Text>
-            <Text style={styles.headerSubtitle}>나의 작품들</Text>
+            <Text style={styles.headerSubtitle}>{puzzles.length}개의 작품</Text>
           </View>
+          <View style={styles.headerRight} />
+        </View>
 
           {/* Puzzle List */}
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -237,8 +236,7 @@ export default function GalleryScreen({ navigation }) {
           </Animated.View>
         )}
           </ScrollView>
-        </SafeAreaView>
-      </LinearGradient>
+      </SafeAreaView>
     </View>
   );
 }
@@ -246,65 +244,77 @@ export default function GalleryScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  gradient: {
-    flex: 1,
+    backgroundColor: SpotifyColors.background,
   },
   safeArea: {
     flex: 1,
   },
   header: {
-    padding: 24,
-    paddingTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SpotifySpacing.base,
+    paddingVertical: SpotifySpacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: SpotifyColors.divider,
+  },
+  backButtonContainer: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backButton: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    marginBottom: 12,
-    fontWeight: '600',
+    fontSize: 32,
+    color: SpotifyColors.textPrimary,
+    fontWeight: '300',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerRight: {
+    width: 40,
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
+    fontSize: SpotifyFonts.lg,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: 4,
+    fontSize: SpotifyFonts.xs,
+    color: SpotifyColors.textSecondary,
+    marginTop: 2,
   },
   content: {
     flex: 1,
   },
   contentContainer: {
-    padding: 16,
-    paddingBottom: 32,
+    padding: SpotifySpacing.base,
+    paddingBottom: SpotifySpacing.xxl,
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 80,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    marginHorizontal: 16,
-    borderRadius: 24,
-    padding: 40,
+    backgroundColor: SpotifyColors.backgroundLight,
+    marginHorizontal: SpotifySpacing.base,
+    borderRadius: SpotifyRadius.lg,
+    padding: SpotifySpacing.xxl,
   },
   emptyIcon: {
     fontSize: 80,
-    marginBottom: 16,
+    marginBottom: SpotifySpacing.base,
   },
   emptyTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2C3E50',
-    marginBottom: 8,
+    fontSize: SpotifyFonts.xl,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
+    marginBottom: SpotifySpacing.sm,
   },
   emptyDesc: {
-    fontSize: 16,
-    color: '#7F8C8D',
+    fontSize: SpotifyFonts.base,
+    color: SpotifyColors.textSecondary,
     textAlign: 'center',
   },
   loadingContainer: {
@@ -313,21 +323,16 @@ const styles = StyleSheet.create({
     paddingTop: 100,
   },
   loadingText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    marginTop: 12,
+    fontSize: SpotifyFonts.base,
+    color: SpotifyColors.textSecondary,
+    marginLeft: SpotifySpacing.sm,
   },
   puzzleCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
+    marginBottom: SpotifySpacing.md,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderRadius: SpotifyRadius.lg,
     overflow: 'hidden',
   },
   puzzleCardContent: {
@@ -336,67 +341,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   thumbnailImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 14,
-    margin: 12,
-    backgroundColor: '#E0E0E0',
+    width: 100,
+    height: 100,
+    borderRadius: SpotifyRadius.md,
+    margin: SpotifySpacing.md,
+    backgroundColor: SpotifyColors.backgroundElevated,
   },
   actionButtons: {
     flexDirection: 'column',
     justifyContent: 'center',
-    paddingRight: 8,
+    paddingRight: SpotifySpacing.sm,
   },
   resetButton: {
-    padding: 12,
+    padding: SpotifySpacing.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
   resetButtonText: {
-    fontSize: 22,
+    fontSize: 20,
   },
   deleteButton: {
-    padding: 12,
+    padding: SpotifySpacing.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
   deleteButtonText: {
-    fontSize: 22,
+    fontSize: 20,
   },
   puzzleInfo: {
     flex: 1,
-    paddingVertical: 16,
-    paddingRight: 8,
+    paddingVertical: SpotifySpacing.md,
+    paddingRight: SpotifySpacing.sm,
   },
   puzzleInfoHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: SpotifySpacing.xs,
   },
   puzzleTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#2C3E50',
+    fontSize: SpotifyFonts.md,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
     flex: 1,
-    marginRight: 8,
+    marginRight: SpotifySpacing.sm,
   },
   difficultyBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    paddingHorizontal: SpotifySpacing.sm,
+    paddingVertical: SpotifySpacing.xs,
+    borderRadius: SpotifyRadius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   difficultyText: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
+    fontSize: SpotifyFonts.xs,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.background,
   },
   puzzleSubtext: {
-    fontSize: 13,
-    color: '#7F8C8D',
-    marginBottom: 8,
+    fontSize: SpotifyFonts.sm,
+    color: SpotifyColors.textSecondary,
+    marginBottom: SpotifySpacing.sm,
   },
   infoRow: {
     flexDirection: 'row',
@@ -408,67 +413,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modeIcon: {
-    fontSize: 14,
+    fontSize: 12,
     marginRight: 4,
   },
   modeText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: SpotifyFonts.xs,
+    fontWeight: SpotifyFonts.semiBold,
   },
   progressInfo: {
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    paddingHorizontal: SpotifySpacing.sm,
+    paddingVertical: SpotifySpacing.xs,
+    borderRadius: SpotifyRadius.sm,
   },
   progressText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2C3E50',
+    fontSize: SpotifyFonts.xs,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.primary,
   },
-  // 🎯 스켈레톤 로딩 스타일
+  // 스켈레톤 로딩 스타일
   skeletonCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderRadius: 20,
-    padding: 12,
+    marginBottom: SpotifySpacing.md,
+    backgroundColor: SpotifyColors.backgroundLight,
+    borderRadius: SpotifyRadius.lg,
+    padding: SpotifySpacing.md,
   },
   skeletonImage: {
-    width: 120,
-    height: 120,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.08)',
+    width: 100,
+    height: 100,
+    borderRadius: SpotifyRadius.md,
+    backgroundColor: SpotifyColors.backgroundElevated,
   },
   skeletonInfo: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: SpotifySpacing.base,
   },
   skeletonTitle: {
     width: '70%',
-    height: 18,
-    backgroundColor: 'rgba(0, 0, 0, 0.08)',
-    borderRadius: 4,
-    marginBottom: 12,
+    height: 16,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.sm,
+    marginBottom: SpotifySpacing.md,
   },
   skeletonSubtext: {
     width: '50%',
-    height: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.06)',
-    borderRadius: 4,
-    marginBottom: 12,
+    height: 12,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.sm,
+    marginBottom: SpotifySpacing.md,
   },
   skeletonProgress: {
     width: '40%',
     height: 12,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderRadius: 4,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.sm,
   },
   loadingOverlay: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
+    marginTop: SpotifySpacing.base,
   },
 });
