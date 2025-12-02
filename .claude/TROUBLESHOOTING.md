@@ -478,3 +478,93 @@ private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, s
 ## 마지막 업데이트
 2025-11-28: 초기 작성 - 색칠/지우기 딜레이, 깜빡임, 색상 표시 문제 해결 과정 정리
 2025-11-28: 텍스처 렌더링 완전 해결 (Pre-baking 방식) 추가
+
+---
+
+## 12. Dev Client "Android internal error" 문제 (Expo 54+)
+
+### 증상
+- 앱 실행 후 QR 코드 스캔 또는 URL 입력 시 "Error loading app - Android internal error" 에러
+- Metro 서버는 정상 실행 중
+- 같은 기기에서 다른 Expo 프로젝트(예: Expo 52)는 잘 됨
+
+### 원인
+**Expo 터널 URL에 언더스코어(`_`)가 포함되면 Android dev-client에서 에러 발생**
+
+예시:
+- ❌ `https://5luh_l8-anonymous-8081.exp.direct` (언더스코어 포함)
+- ✅ `https://colorplay-anonymous-8081.exp.direct` (언더스코어 없음)
+
+GitHub Issue: [#30225](https://github.com/expo/expo/issues/30225)
+
+### 해결 방법
+
+#### 1. 환경변수로 터널 서브도메인 지정
+```cmd
+# CMD
+set EXPO_TUNNEL_SUBDOMAIN=colorplay
+npx expo start --tunnel --dev-client
+
+# PowerShell
+$env:EXPO_TUNNEL_SUBDOMAIN="colorplay"
+npx expo start --tunnel --dev-client
+```
+
+#### 2. app.json에 scheme 추가 (권장)
+```json
+{
+  "expo": {
+    "name": "Photo Color",
+    "slug": "ColorPlayExpo",
+    "scheme": "colorplayexpo",
+    ...
+  }
+}
+```
+
+#### 3. plugins에 expo-dev-client 추가 (권장)
+```json
+{
+  "expo": {
+    ...
+    "plugins": [
+      "expo-dev-client"
+    ],
+    ...
+  }
+}
+```
+
+### 설정 후 필수 작업
+```bash
+# 1. 네이티브 프로젝트 재생성
+npx expo prebuild --clean
+
+# 2. APK 빌드
+cd android && ./gradlew.bat assembleDebug && cd ..
+
+# 3. APK 설치 (USB 연결 시)
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+# 4. Metro 서버 시작 (언더스코어 없는 URL)
+set EXPO_TUNNEL_SUBDOMAIN=colorplay
+npx expo start --tunnel --dev-client --clear
+```
+
+### 체크리스트
+- [ ] `app.json`에 `scheme` 설정 확인
+- [ ] `app.json`에 `plugins: ["expo-dev-client"]` 확인
+- [ ] `EXPO_TUNNEL_SUBDOMAIN` 환경변수 설정
+- [ ] 터널 URL에 언더스코어(`_`) 없는지 확인
+- [ ] 앱 삭제 후 새 APK 설치
+
+### 버전 정보
+- 이 문제는 **Expo SDK 54 + expo-dev-client 6.x**에서 발생
+- Expo SDK 52 + expo-dev-client 5.x에서는 발생하지 않음
+
+---
+
+## 마지막 업데이트
+2025-11-28: 초기 작성 - 색칠/지우기 딜레이, 깜빡임, 색상 표시 문제 해결 과정 정리
+2025-11-28: 텍스처 렌더링 완전 해결 (Pre-baking 방식) 추가
+2025-12-02: Dev Client "Android internal error" 문제 해결 (터널 URL 언더스코어 이슈)
