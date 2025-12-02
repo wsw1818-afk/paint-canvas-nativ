@@ -624,20 +624,43 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     // 모바일: 고정 높이 View
     return (
       <View style={styles.paletteContainer}>
-        <View style={styles.palette}>
-          {actualColors.map((color) => (
-            <ColorButton
-              key={color.id}
-              color={color}
-              isSelected={selectedColor?.id === color.id}
-              onSelect={colorSelectHandlers.get(color.id)}
-              luminance={colorLuminanceMap.get(color.id)}
-            />
-          ))}
+        <View style={styles.paletteWithUndo}>
+          {/* 되돌리기 버튼 - 팔레트 왼쪽에 배치 */}
+          <TouchableOpacity
+            style={[
+              styles.undoButtonPalette,
+              undoMode && styles.undoButtonActive,
+              wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
+            ]}
+            onPress={() => {
+              if (undoMode) {
+                setUndoMode(false);
+              } else if (wrongCells.size > 0) {
+                setUndoMode(true);
+              }
+            }}
+            disabled={wrongCells.size === 0 && !undoMode}
+          >
+            <Text style={styles.undoIcon}>↩️</Text>
+            <Text style={styles.undoCount}>{wrongCells.size}</Text>
+          </TouchableOpacity>
+
+          {/* 색상 팔레트 */}
+          <View style={styles.palette}>
+            {actualColors.map((color) => (
+              <ColorButton
+                key={color.id}
+                color={color}
+                isSelected={selectedColor?.id === color.id}
+                onSelect={colorSelectHandlers.get(color.id)}
+                luminance={colorLuminanceMap.get(color.id)}
+              />
+            ))}
+          </View>
         </View>
       </View>
     );
-  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers]);
+  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size]);
 
   if (isTablet) {
     // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
@@ -736,28 +759,6 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             <Text style={styles.coinIcon}>🪙</Text>
             <Text style={styles.score}>{score}</Text>
           </View>
-
-          {/* 되돌리기 버튼 - 항상 표시 */}
-          <TouchableOpacity
-            style={[
-              styles.undoButton,
-              undoMode && styles.undoButtonActive,
-              wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
-            ]}
-            onPress={() => {
-              // undoMode가 켜져 있으면 항상 끌 수 있음
-              // wrongCells가 있을 때만 켤 수 있음
-              if (undoMode) {
-                setUndoMode(false);
-              } else if (wrongCells.size > 0) {
-                setUndoMode(true);
-              }
-            }}
-            disabled={wrongCells.size === 0 && !undoMode}
-          >
-            <Text style={styles.undoIcon}>↩️</Text>
-            <Text style={styles.undoCount}>{wrongCells.size}</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -926,7 +927,24 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: SpotifyColors.divider,
   },
+  paletteWithUndo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  undoButtonPalette: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: SpotifyColors.error,
+    paddingHorizontal: SpotifySpacing.sm,
+    paddingVertical: SpotifySpacing.sm,
+    borderRadius: SpotifyRadius.md,
+    minWidth: 40,
+    height: 70,
+  },
   palette: {
+    flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 4,
