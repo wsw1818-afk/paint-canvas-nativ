@@ -39,11 +39,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     /**
      * 🚀 첫 번째 성공적인 렌더링 완료 시 JS에 알림
      * onDraw에서 실제 캔버스가 그려진 후 호출됨
+     * 🐛 잠재적 문제 해결: 진행 상황 로딩 완료 후에만 알림 (비동기 로딩 완료 대기)
      */
     private fun notifyCanvasReady() {
+        // 진행 상황 로딩이 완료되지 않았으면 대기
+        if (!isProgressLoaded) return
+
         if (!hasNotifiedReady) {
             hasNotifiedReady = true
-            android.util.Log.d("PaintCanvas", "🚀 Canvas Ready! 첫 렌더링 완료")
+            android.util.Log.d("PaintCanvas", "🚀 Canvas Ready! 첫 렌더링 완료, filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
             onCanvasReady(mapOf(
                 "ready" to true,
                 "filledCells" to filledCells.size,
@@ -717,6 +721,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var isPinching = false
     private var pinchStartScale = 1f  // 핀치 시작 시 스케일
     private var pinchStartSpan = 0f   // 핀치 시작 시 손가락 거리
+    private var isPanningOnly = false // 🐛 팬 모드 시작 시 줌 차단
+    private var initialSpanForPanCheck = 0f  // 🐛 팬/줌 결정용 초기 간격
 
     // 🎬 부드러운 줌 애니메이션 (두 손가락 탭용)
     private var zoomAnimator: ValueAnimator? = null
@@ -728,7 +734,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             // ⚠️ 안전 체크
-            if (pinchStartSpan <= 0f) return true
+            if (pinchStartSpan <= 0f || initialSpanForPanCheck <= 0f) return true
+
+            // 🐛 팬 모드면 줌 완전 차단
+            if (isPanningOnly) return true
+
+            // 🎯 초기 간격 대비 변화량으로 줌 여부 결정 (누적 판단)
+            val spanRatioFromInitial = detector.currentSpan / initialSpanForPanCheck
+
+            // 🐛 버그 수정: 초기 간격 대비 25% 이상 변해야 줌 동작 (이동 중 의도치 않은 줌 방지)
+            if (spanRatioFromInitial > 0.75f && spanRatioFromInitial < 1.25f) {
+                return true  // 줌 무시, 팬만 동작
+            }
 
             // 🎯 5단계 줌: 확대 1x→80%→100%, 축소 100%→80%→50%→1x
             val spanRatio = detector.currentSpan / pinchStartSpan
@@ -769,6 +786,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            // 🐛 팬 모드면 줌 시작 차단
+            if (isPanningOnly) return false
+
             touchMode = TouchMode.ZOOM
             isPinching = true
             pinchStartScale = scaleFactor
@@ -780,6 +800,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         override fun onScaleEnd(detector: ScaleGestureDetector) {
             touchMode = TouchMode.NONE
             isPinching = false
+            isPanningOnly = false  // 🐛 팬 모드 리셋
+            initialSpanForPanCheck = 0f
             syncZoomIndex()
         }
     })
@@ -1029,7 +1051,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val cellIndex = rowOffset + col
 
                 // ⚡ 색칠된 셀 색상 직접 조회 (contains 호출 제거)
-                val cellColor = paintedColorMapInt[cellIndex]
+                var cellColor = paintedColorMapInt[cellIndex]
+
+                // 🐛 버그 수정: filledCellIndices에 있는데 paintedColorMapInt에 없으면 정답 색상 사용
+                // (복원 시 색상 정보가 없어도 정답 셀로 표시)
+                if (cellColor == null && filledCellIndices.contains(cellIndex)) {
+                    cellColor = parsedColorMap[cellIndex] ?: Color.WHITE
+                }
 
                 if (cellColor != null) {
                     // 색칠된 셀
@@ -1118,6 +1146,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     twoFingerStartY = centroidY
                     twoFingerLastX = centroidX
                     twoFingerLastY = centroidY
+
+                    // 🐛 팬/줌 결정을 위한 초기 손가락 간격 저장
+                    val dx = event.getX(0) - event.getX(1)
+                    val dy = event.getY(0) - event.getY(1)
+                    initialSpanForPanCheck = kotlin.math.sqrt(dx * dx + dy * dy)
+                    isPanningOnly = false  // 초기화
                 }
             }
 
@@ -1130,9 +1164,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val dy = event.y - touchStartY
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                            // ⚡ 두 손가락 터치 방지: 45ms 대기 또는 15px 이동 시 색칠 시작
-                            // 두 손가락은 보통 40ms 내 두 번째 손가락 도착 (빠른 응답)
-                            if (timeSinceDown >= 45L || distance > 15f) {
+                            // ⚡ 두 손가락 터치 방지: 25ms 대기 또는 8px 이동 시 색칠 시작
+                            // 두 손가락은 보통 40ms 내 두 번째 손가락 도착 (더 빠른 응답)
+                            if (timeSinceDown >= 25L || distance > 8f) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
                                 hasMoved = true
@@ -1153,6 +1187,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         // 팬 처리 (줌은 ScaleGestureDetector가 처리)
                         val dx = centroidX - lastTouchX
                         val dy = centroidY - lastTouchY
+
+                        // 🐛 팬 이동이 발생하면 줌 차단 (30px 이상 이동 시)
+                        val panDistanceFromStart = kotlin.math.sqrt(
+                            (centroidX - twoFingerStartX) * (centroidX - twoFingerStartX) +
+                            (centroidY - twoFingerStartY) * (centroidY - twoFingerStartY)
+                        )
+                        if (panDistanceFromStart > 30f && !isPanningOnly) {
+                            isPanningOnly = true  // 팬 모드로 전환, 줌 차단
+                        }
 
                         translateX += dx
                         translateY += dy
@@ -1184,6 +1227,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 preventPaintOnce = false
                 allowPainting = false
                 hasMoved = false
+                isPanningOnly = false  // 🐛 팬 모드 리셋
+                initialSpanForPanCheck = 0f
 
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
@@ -1198,6 +1243,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     touchMode = TouchMode.NONE
                     preventPaintOnce = true
                     allowPainting = false
+                    isPanningOnly = false  // 🐛 팬 모드 리셋
+                    initialSpanForPanCheck = 0f
                 }
             }
 
@@ -1205,6 +1252,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 touchMode = TouchMode.NONE
                 activePointerId = -1
                 hasMoved = false
+                isPanningOnly = false  // 🐛 팬 모드 리셋
+                initialSpanForPanCheck = 0f
             }
         }
 
@@ -2371,6 +2420,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // 🐛 잠재적 문제 해결: 앱 백그라운드 전환 시 진행 상황 동기 저장
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        try {
+            if (visibility == GONE || visibility == INVISIBLE) {
+                // 화면이 안 보이게 되면 (홈 버튼, 다른 앱 전환 등) 동기 저장
+                if (filledCells.isNotEmpty() || wrongPaintedCells.isNotEmpty()) {
+                    saveProgressToPrefsSync()
+                    android.util.Log.d("PaintCanvas", "💾 백그라운드 전환, 진행 상황 동기 저장 완료")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ onWindowVisibilityChanged 오류: ${e.message}")
+        }
+    }
+
     /**
      * 🧹 이미지 Bitmap만 해제 (새 이미지 로드 전 호출)
      * - backgroundBitmap, originalBitmap, 텍스처 캐시만 해제
@@ -2517,11 +2582,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         if (savedColor != 0) {
                             tempColorMapInt[idx] = savedColor
                             tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
-                        } else {
-                            val correctColor = currentParsedColors[idx] ?: Color.WHITE
-                            tempColorMapInt[idx] = correctColor
-                            tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and correctColor)
                         }
+                        // 🐛 버그 수정: savedColor가 0이면 색상 정보 없음 (정답 색상으로 대체하지 않음)
+                        // 정답 색상은 onDraw에서 parsedColorMap에서 직접 가져옴
                     }
                 }
 

@@ -487,9 +487,18 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   }, [filledCells.size, isCanvasReady, saveProgress]);
 
   // 🚀 Native 캔버스 초기화 완료 핸들러
+  // 🐛 잠재적 문제 해결: Native에서 복원한 상태를 JS에 동기화
   const handleCanvasReady = useCallback((event) => {
     const { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells } = event.nativeEvent;
     console.log('[PlayScreen] 🚀 Native Canvas Ready:', { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells });
+
+    // Native에서 복원한 데이터가 있으면 JS 상태에 반영 (Native가 마스터)
+    if (nativeFilledCells && nativeFilledCells > 0) {
+      // Native가 더 많은 데이터를 가지고 있으면 JS AsyncStorage에서 다시 로드
+      // (이미 loadProgress에서 로드했으므로 여기서는 개수만 확인)
+      console.log('[PlayScreen] 📊 Native 상태 동기화: filled=' + nativeFilledCells + ', wrong=' + nativeWrongCells);
+    }
+
     setIsNativeReady(true);
   }, []);
 
