@@ -29,6 +29,7 @@ data class CellData(
 class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
     private val onCellPainted by EventDispatcher()
     private val onCanvasReady by EventDispatcher()
+    private val onViewportChange by EventDispatcher()
 
     // 🚀 초기화 완료 상태 추적
     private var isImageLoaded = false
@@ -1237,6 +1238,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             if (cellSize <= 0f || canvasWidth <= 0f) return
             if (isImageLoading) return  // ⚡ 이미지 로딩 중 색칠 차단
 
+            // 🔒 확대율 60% 미만에서는 색칠 차단
+            val zoomPercent = (scaleFactor / maxZoom) * 100f
+            if (zoomPercent < 60f) return
+
             // ⚡ 재사용 객체로 좌표 변환 (메모리 할당 제거)
             paintingMatrix.reset()
             paintingMatrix.postScale(scaleFactor, scaleFactor)
@@ -1521,6 +1526,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val maxY = EDGE_PADDING
             translateY = max(minY, min(maxY, translateY))
         }
+
+        // 🗺️ 뷰포트 변경 이벤트 전송 (미니맵용)
+        sendViewportChangeEvent()
     }
 
     private fun sendCellPaintedEvent(row: Int, col: Int, correct: Boolean) {
@@ -1529,6 +1537,83 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             "col" to col,
             "correct" to correct
         ))
+    }
+
+    /**
+     * 🗺️ 뷰포트 변경 이벤트 전송 (미니맵용)
+     * 현재 보이는 영역의 위치와 크기를 0~1 비율로 전달
+     */
+    private fun sendViewportChangeEvent() {
+        if (canvasWidth <= 0 || canvasViewWidth <= 0) return
+
+        val scaledCanvasWidth = canvasWidth * scaleFactor
+        val scaledCanvasHeight = canvasWidth * scaleFactor  // Square canvas
+
+        // 캔버스 전체 대비 현재 뷰포트의 비율 계산
+        // viewportX/Y: 현재 보이는 영역의 시작점 (0~1)
+        // viewportWidth/Height: 현재 보이는 영역의 크기 (0~1)
+
+        val viewportX = if (scaledCanvasWidth <= canvasViewWidth) {
+            0f  // 캔버스가 뷰보다 작으면 전체 보임
+        } else {
+            (-translateX / scaledCanvasWidth).coerceIn(0f, 1f)
+        }
+
+        val viewportY = if (scaledCanvasHeight <= canvasViewHeight) {
+            0f
+        } else {
+            (-translateY / scaledCanvasHeight).coerceIn(0f, 1f)
+        }
+
+        val viewportWidth = if (scaledCanvasWidth <= canvasViewWidth) {
+            1f  // 전체 보임
+        } else {
+            (canvasViewWidth / scaledCanvasWidth).coerceIn(0f, 1f)
+        }
+
+        val viewportHeight = if (scaledCanvasHeight <= canvasViewHeight) {
+            1f
+        } else {
+            (canvasViewHeight / scaledCanvasHeight).coerceIn(0f, 1f)
+        }
+
+        onViewportChange(mapOf(
+            "viewportX" to viewportX,
+            "viewportY" to viewportY,
+            "viewportWidth" to viewportWidth,
+            "viewportHeight" to viewportHeight,
+            "scale" to scaleFactor
+        ))
+    }
+
+    /**
+     * 🗺️ 미니맵에서 터치한 위치로 뷰포트 이동
+     * @param targetX 목표 X 위치 (0~1 비율, 뷰포트 중심 기준)
+     * @param targetY 목표 Y 위치 (0~1 비율, 뷰포트 중심 기준)
+     */
+    fun setViewportPosition(targetX: Float, targetY: Float) {
+        if (canvasWidth <= 0 || canvasViewWidth <= 0) return
+
+        val scaledCanvasWidth = canvasWidth * scaleFactor
+        val scaledCanvasHeight = canvasWidth * scaleFactor  // Square canvas
+
+        // 현재 뷰포트 크기 계산
+        val viewportWidth = if (scaledCanvasWidth <= canvasViewWidth) 1f
+            else (canvasViewWidth / scaledCanvasWidth).coerceIn(0f, 1f)
+        val viewportHeight = if (scaledCanvasHeight <= canvasViewHeight) 1f
+            else (canvasViewHeight / scaledCanvasHeight).coerceIn(0f, 1f)
+
+        // 뷰포트 중심을 터치 위치로 이동 (터치 위치가 뷰포트 중심이 되도록)
+        val centerX = (targetX - viewportWidth / 2f).coerceIn(0f, 1f - viewportWidth)
+        val centerY = (targetY - viewportHeight / 2f).coerceIn(0f, 1f - viewportHeight)
+
+        // translateX/Y 계산 (비율 → 실제 좌표)
+        translateX = -centerX * scaledCanvasWidth
+        translateY = -centerY * scaledCanvasHeight
+
+        // 경계 적용 및 이벤트 전송
+        applyBoundaries()
+        invalidate()
     }
 
     private fun loadBitmap(uriString: String): Bitmap? {

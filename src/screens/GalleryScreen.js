@@ -1,15 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Image, StatusBar, Alert, InteractionManager, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+import { showPuzzleSelectAd } from '../utils/adManager';
+import { t, addLanguageChangeListener } from '../locales';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [ready, setReady] = useState(false);  // 화면 전환 완료 여부
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [, forceUpdate] = useState(0);
+
+  // 🌐 언어 변경 리스너
+  useEffect(() => {
+    const unsubscribe = addLanguageChangeListener(() => {
+      forceUpdate((n) => n + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   // 🚀 화면 전환 애니메이션 완료 후 데이터 로딩 (초기 지연 해결)
   useEffect(() => {
@@ -44,24 +55,24 @@ export default function GalleryScreen({ navigation }) {
 
   const handleDeletePuzzle = async (puzzle) => {
     Alert.alert(
-      '퍼즐 삭제',
-      `"${puzzle.title || '제목 없음'}"을(를) 완전히 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없으며, 모든 진행 상황이 함께 삭제됩니다.`,
+      t('gallery.deleteTitle'),
+      t('gallery.deleteMessage', { title: puzzle.title || 'Untitled' }),
       [
         {
-          text: '취소',
+          text: t('common.cancel'),
           style: 'cancel'
         },
         {
-          text: '삭제',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             try {
               await deletePuzzle(puzzle.id);
               await loadSavedPuzzles();
-              Alert.alert('삭제 완료', '퍼즐이 삭제되었습니다.');
+              Alert.alert(t('common.success'), t('gallery.deleteSuccess'));
             } catch (error) {
               console.error('퍼즐 삭제 실패:', error);
-              Alert.alert('오류', '삭제에 실패했습니다.');
+              Alert.alert(t('common.error'), t('common.error'));
             }
           }
         }
@@ -71,15 +82,18 @@ export default function GalleryScreen({ navigation }) {
 
   const handleResetPuzzle = async (puzzle) => {
     Alert.alert(
-      '진행 상황 초기화',
-      `"${puzzle.title || '제목 없음'}"의 모든 진행 상황을 초기화하시겠습니까?\n\n현재 완성도: ${Math.round(puzzle.progress || 0)}%\n\n이 작업은 되돌릴 수 없습니다.`,
+      t('gallery.resetTitle'),
+      t('gallery.resetMessage', {
+        title: puzzle.title || t('gallery.untitled'),
+        progress: Math.round(puzzle.progress || 0)
+      }),
       [
         {
-          text: '취소',
+          text: t('common.cancel'),
           style: 'cancel'
         },
         {
-          text: '초기화',
+          text: t('gallery.reset'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -97,10 +111,10 @@ export default function GalleryScreen({ navigation }) {
               // 목록 새로고침
               await loadSavedPuzzles();
 
-              Alert.alert('초기화 완료', '진행 상황이 초기화되었습니다.');
+              Alert.alert(t('common.success'), t('gallery.resetSuccess'));
             } catch (error) {
               console.error('퍼즐 초기화 실패:', error);
-              Alert.alert('오류', '초기화에 실패했습니다.');
+              Alert.alert(t('common.error'), t('gallery.resetFailed'));
             }
           }
         }
@@ -110,10 +124,25 @@ export default function GalleryScreen({ navigation }) {
 
   const getDifficultyInfo = (colors, gridSize) => {
     // 난이도 판별: 색상 수 + 격자 크기로 구분
-    if (colors <= 16) return { name: '쉬움', color: SpotifyColors.primary };      // 16색 이하 = 쉬움
-    if (colors > 36 || gridSize >= 200) return { name: '어려움', color: SpotifyColors.error };  // 36색 초과 또는 200×200 이상 = 어려움
-    return { name: '보통', color: SpotifyColors.warning };                         // 그 외 = 보통
+    if (colors <= 16) return { name: t('gallery.difficultyEasy'), color: SpotifyColors.primary };      // 16색 이하 = 쉬움
+    if (colors > 36 || gridSize >= 200) return { name: t('gallery.difficultyHard'), color: SpotifyColors.error };  // 36색 초과 또는 200×200 이상 = 어려움
+    return { name: t('gallery.difficultyMedium'), color: SpotifyColors.warning };                         // 그 외 = 보통
   };
+
+  // 📢 퍼즐 선택 핸들러 (3회마다 전면 광고)
+  const handlePuzzleSelect = useCallback((puzzle, completionMode) => {
+    showPuzzleSelectAd(() => {
+      navigation.navigate('Play', {
+        puzzleId: puzzle.id,
+        imageUri: puzzle.imageUri || puzzle.imageBase64,
+        colorCount: puzzle.colorCount,
+        gridSize: puzzle.gridSize,
+        gridColors: puzzle.gridColors,
+        dominantColors: puzzle.dominantColors,
+        completionMode: completionMode
+      });
+    });
+  }, [navigation]);
 
   return (
     <View style={styles.container}>
@@ -125,8 +154,8 @@ export default function GalleryScreen({ navigation }) {
             <Text style={styles.backButton}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.title}>갤러리</Text>
-            <Text style={styles.headerSubtitle}>{puzzles.length}개의 작품</Text>
+            <Text style={styles.title}>{t('gallery.title')}</Text>
+            <Text style={styles.headerSubtitle}>{t('gallery.itemCount', { count: puzzles.length })}</Text>
           </View>
           <View style={styles.headerRight} />
         </View>
@@ -148,14 +177,14 @@ export default function GalleryScreen({ navigation }) {
             ))}
             <View style={styles.loadingOverlay}>
               <ActivityIndicator size="small" color="#FFFFFF" />
-              <Text style={styles.loadingText}>불러오는 중...</Text>
+              <Text style={styles.loadingText}>{t('common.loading')}</Text>
             </View>
           </View>
         ) : puzzles.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>🎨</Text>
-            <Text style={styles.emptyTitle}>완료된 작품이 없습니다</Text>
-            <Text style={styles.emptyDesc}>격자 적용된 퍼즐에서 작업을 완료하면 여기에 저장됩니다</Text>
+            <Text style={styles.emptyTitle}>{t('gallery.emptyTitle')}</Text>
+            <Text style={styles.emptyDesc}>{t('gallery.emptyDesc')}</Text>
           </View>
         ) : (
           <Animated.View style={{ opacity: fadeAnim }}>
@@ -163,8 +192,8 @@ export default function GalleryScreen({ navigation }) {
             const difficultyInfo = getDifficultyInfo(puzzle.colorCount || 12, puzzle.gridSize || 120);
             const completionMode = puzzle.completionMode || 'ORIGINAL';
             const modeInfo = completionMode === 'ORIGINAL'
-              ? { icon: '🖼️', name: '원본 이미지', color: '#FF6B6B' }
-              : { icon: '🧶', name: '위빙 텍스처', color: '#9B59B6' };
+              ? { icon: '🖼️', name: t('gallery.modeOriginal'), color: '#FF6B6B' }
+              : { icon: '🧶', name: t('gallery.modeWeave'), color: '#9B59B6' };
 
             // 썸네일 이미지 우선순위:
             // 1. 진행 썸네일 (색칠 진행 중인 상태)
@@ -178,39 +207,37 @@ export default function GalleryScreen({ navigation }) {
               <View key={puzzle.id} style={styles.puzzleCard}>
                 <TouchableOpacity
                   style={styles.puzzleCardContent}
-                  onPress={() => navigation.navigate('Play', {
-                    puzzleId: puzzle.id,  // 퍼즐 ID 전달 (완성도 업데이트용)
-                    imageUri: puzzle.imageUri || puzzle.imageBase64,  // file:// URI 전달 (하위 호환성 유지)
-                    colorCount: puzzle.colorCount,
-                    gridSize: puzzle.gridSize,  // 난이도별 격자 크기
-                    gridColors: puzzle.gridColors,
-                    dominantColors: puzzle.dominantColors,  // 이미지에서 추출한 실제 색상
-                    completionMode: completionMode  // 완성 모드 (기본: 원본 이미지)
-                  })}
+                  onPress={() => handlePuzzleSelect(puzzle, completionMode)}
                 >
                   {/* 이미지 썸네일 - WEAVE 모드면 위빙 미리보기, 아니면 원본 */}
-                  <Image
-                    source={{ uri: thumbnailUri }}
-                    style={styles.thumbnailImage}
-                    resizeMode="cover"
-                    fadeDuration={0}
-                  />
+                  <View style={styles.thumbnailContainer}>
+                    <Image
+                      source={{ uri: thumbnailUri }}
+                      style={styles.thumbnailImage}
+                      resizeMode="cover"
+                      fadeDuration={0}
+                    />
+                    {/* 진행 썸네일이 없으면 음영 오버레이 표시 (0% 상태) */}
+                    {!puzzle.progressThumbnailUri && (
+                      <View style={styles.thumbnailShadowOverlay} />
+                    )}
+                  </View>
 
                   <View style={styles.puzzleInfo}>
                     <View style={styles.puzzleInfoHeader}>
-                      <Text style={styles.puzzleTitle}>{puzzle.title || '제목 없음'}</Text>
+                      <Text style={styles.puzzleTitle}>{puzzle.title || t('gallery.untitled')}</Text>
                       <View style={[styles.difficultyBadge, { backgroundColor: difficultyInfo.color }]}>
                         <Text style={styles.difficultyText}>{difficultyInfo.name}</Text>
                       </View>
                     </View>
-                    <Text style={styles.puzzleSubtext}>{puzzle.colorCount}가지 색상</Text>
+                    <Text style={styles.puzzleSubtext}>{t('gallery.colorCount', { count: puzzle.colorCount })}</Text>
                     <View style={styles.infoRow}>
                       <View style={styles.modeInfo}>
                         <Text style={styles.modeIcon}>{modeInfo.icon}</Text>
                         <Text style={[styles.modeText, { color: modeInfo.color }]}>{modeInfo.name}</Text>
                       </View>
                       <View style={styles.progressInfo}>
-                        <Text style={styles.progressText}>완성도: {Math.round(puzzle.progress || 0)}%</Text>
+                        <Text style={styles.progressText}>{t('gallery.progress', { percent: Math.round(puzzle.progress || 0) })}</Text>
                       </View>
                     </View>
                   </View>
@@ -340,12 +367,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  thumbnailImage: {
+  thumbnailContainer: {
     width: 100,
     height: 100,
-    borderRadius: SpotifyRadius.md,
     margin: SpotifySpacing.md,
+    borderRadius: SpotifyRadius.md,
+    overflow: 'hidden',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: SpotifyRadius.md,
     backgroundColor: SpotifyColors.backgroundElevated,
+  },
+  thumbnailShadowOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    borderRadius: SpotifyRadius.md,
   },
   actionButtons: {
     flexDirection: 'column',

@@ -43,4 +43,22 @@ export function captureThumbnail(size: number = 256): string | null {
   return PaintCanvasModule.captureThumbnail(size);
 }
 
+/**
+ * 🗺️ 미니맵 이미지 캡처 - 음영 + 색칠된 부분 표시
+ * @param size 출력 이미지 크기 (기본 120)
+ * @returns Base64 인코딩된 PNG 문자열 또는 null
+ */
+export function getMinimapImage(size: number = 120): string | null {
+  return PaintCanvasModule.getMinimapImage(size);
+}
+
+/**
+ * 🗺️ 미니맵 터치로 뷰포트 이동
+ * @param x 목표 X 위치 (0~1 비율)
+ * @param y 목표 Y 위치 (0~1 비율)
+ */
+export function setViewportPosition(x: number, y: number): void {
+  PaintCanvasModule.setViewportPosition(x, y);
+}
+
 export const PaintCanvasView = requireNativeViewManager<PaintCanvasProps>('PaintCanvas');

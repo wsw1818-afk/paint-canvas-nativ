@@ -9,7 +9,13 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "plugins": [
-      "expo-dev-client"
+      "expo-dev-client",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-8246295829048098~6632677600"
+        }
+      ]
     ],
     "splash": {
       "image": "./assets/splash-icon.png",

@@ -41,7 +41,7 @@ npx expo prebuild --clean
 cd android && ./gradlew.bat assembleDebug && cd ..
 
 # 4. 결과물 복사
-copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlayExpo-fixed-debug.apk"
+copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-fixed-debug.apk"
 ```
 
 ### 왜 `expo prebuild --clean`이 필요한가?
@@ -144,12 +144,12 @@ call gradlew.bat assembleDebug
 echo.
 echo [3/3] Copying to output directory...
 cd ..
-copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlayExpo-debug.apk"
+copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-debug.apk"
 
 echo.
 echo ======================================
 echo Build Complete!
-echo Output: D:\OneDrive\코드작업\결과물\ColorPlayExpo-debug.apk
+echo Output: D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-debug.apk
 echo ======================================
 pause
 ```
@@ -178,7 +178,7 @@ call gradlew.bat assembleDebug
 echo.
 echo [4/4] Copying to output directory...
 cd ..
-copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlayExpo-fixed-debug.apk"
+copy /Y "android\app\build\outputs\apk\debug\app-debug.apk" "D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-fixed-debug.apk"
 
 echo.
 echo ======================================
@@ -229,7 +229,97 @@ pause
 - "JS 코드만 수정했으므로 빌드 없이 Reload하면 됩니다."
 - "Native 코드(PaintCanvasView.kt)를 수정했으므로 APK 빌드가 필요합니다. 빌드할까요?"
 
+---
+
+## 📢 AdMob 광고 ID 설정 가이드
+
+### 광고 ID 위치 (3곳)
+
+| 파일 | 광고 종류 | 설명 |
+|------|----------|------|
+| `app.json` | 앱 ID | AdMob 앱 식별자 |
+| `src/screens/PlayScreenNativeModule.js` | 배너 광고 | 플레이 화면 하단 배너 |
+| `src/utils/adManager.js` | 전면 광고 | 퍼즐 완료 시 전면 광고 |
+
+### 정식 광고 ID (플레이스토어 배포용)
+
+```javascript
+// app.json - 앱 ID
+"androidAppId": "ca-app-pub-8246295829048098~6632677600"
+
+// PlayScreenNativeModule.js - 배너 광고
+const adUnitId = 'ca-app-pub-8246295829048098/7057199542';
+
+// adManager.js - 전면 광고
+const INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-8246295829048098/8178709623';
+```
+
+### 테스트 광고 ID (개발/테스트용)
+
+```javascript
+// app.json - 테스트 앱 ID
+"androidAppId": "ca-app-pub-3940256099942544~3347511713"
+
+// PlayScreenNativeModule.js - 테스트 배너
+const adUnitId = 'ca-app-pub-3940256099942544/6300978111';
+
+// adManager.js - 테스트 전면 광고
+const INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-3940256099942544/1033173712';
+```
+
+### 광고 완전 비활성화 (개발자 테스트용)
+
+광고 없이 순수 앱 테스트가 필요할 때:
+
+```javascript
+// PlayScreenNativeModule.js - 배너 광고 비활성화
+const adUnitId = null;  // 또는 빈 문자열 ''
+
+// adManager.js - 전면 광고 비활성화
+const INTERSTITIAL_AD_UNIT_ID = null;  // 또는 빈 문자열 ''
+```
+
+그리고 JSX에서 조건부 렌더링:
+```jsx
+{adUnitId && (
+  <BannerAd unitId={adUnitId} size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER} />
+)}
+```
+
+### 빌드 타입별 광고 설정
+
+| 빌드 타입 | 용도 | 광고 설정 |
+|----------|------|----------|
+| **Debug (개발자 테스트)** | 기능 테스트 | 광고 비활성화 (`null`) |
+| **Debug (광고 테스트)** | 광고 동작 확인 | 테스트 ID 사용 |
+| **Release (플레이스토어)** | 실제 배포 | 정식 ID 사용 |
+
+### 빌드 전 체크리스트
+
+**개발자 테스트용 빌드:**
+- [ ] `adUnitId = null` (배너 비활성화)
+- [ ] `INTERSTITIAL_AD_UNIT_ID = null` (전면 비활성화)
+- [ ] Debug APK 빌드
+
+**플레이스토어 업로드용 빌드:**
+- [ ] 정식 앱 ID 확인 (`app.json`)
+- [ ] 정식 배너 ID 확인 (`PlayScreenNativeModule.js`)
+- [ ] 정식 전면 ID 확인 (`adManager.js`)
+- [ ] Release AAB 빌드
+- [ ] JavaScript 번들 검증 (최신 코드 반영 확인)
+
+### 광고 관련 주의사항
+
+1. **테스트 기기에서 정식 ID 사용 금지**: AdMob 정책 위반으로 계정 정지 가능
+2. **정식 ID는 플레이스토어 배포 버전에서만 사용**
+3. **광고 테스트 시 반드시 테스트 ID 사용**
+4. **개인 기기 테스트 시 광고 비활성화 권장**
+
+---
+
 ## 마지막 업데이트
 2025-11-27: expo-linear-gradient 추가 시 CMake codegen 에러 해결법 추가
 2025-11-29: 코드 수정 후 빌드 필요 여부 안내 지침 추가
 2025-11-30: Git 전용 저장소 정보 추가 (paint-canvas-nativ)
+2025-12-03: AdMob 광고 ID 설정 가이드 추가 (테스트/정식/비활성화)
+2025-12-03: 배포 경로 변경 (결과물/ColorPlay/ 폴더로 분리)

@@ -8,20 +8,22 @@ import { processImage } from '../utils/imageProcessor';
 import { savePuzzle } from '../utils/puzzleStorage';
 import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+import { t, addLanguageChangeListener } from '../locales';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const loadingImage = require('../../assets/loading-image.png');
 
-const DIFFICULTIES = [
-  { id: 'EASY', name: '쉬움 (빠른 플레이)', colors: 16, gridSize: 120, color: SpotifyColors.primary },
-  { id: 'NORMAL', name: '보통 (균형잡힌)', colors: 36, gridSize: 160, color: SpotifyColors.warning },
-  { id: 'HARD', name: '어려움 (사진처럼)', colors: 64, gridSize: 200, color: SpotifyColors.error },
+// 난이도 옵션 (t() 함수를 사용하기 위해 컴포넌트 내부에서 생성)
+const getDifficulties = () => [
+  { id: 'EASY', name: t('generate.easyName'), colors: 16, gridSize: 120, color: SpotifyColors.primary },
+  { id: 'NORMAL', name: t('generate.normalName'), colors: 36, gridSize: 160, color: SpotifyColors.warning },
+  { id: 'HARD', name: t('generate.hardName'), colors: 64, gridSize: 200, color: SpotifyColors.error },
 ];
 
 // 완성 모드 옵션
-const COMPLETION_MODES = [
-  { id: 'ORIGINAL', name: '원본 이미지', desc: '완성 시 원본 사진이 나타남', icon: '🖼️', color: SpotifyColors.primary },
-  { id: 'WEAVE', name: '위빙 텍스처', desc: '완성 시 색칠한 그대로 유지', icon: '🧶', color: '#9B59B6' },
+const getCompletionModes = () => [
+  { id: 'ORIGINAL', name: t('generate.originalMode'), desc: t('generate.originalModeDesc'), icon: '🖼️', color: SpotifyColors.primary },
+  { id: 'WEAVE', name: t('generate.weaveMode'), desc: t('generate.weaveModeDesc'), icon: '🧶', color: '#9B59B6' },
 ];
 
 export default function GenerateScreen({ route, navigation }) {
@@ -68,11 +70,11 @@ export default function GenerateScreen({ route, navigation }) {
   const getSourceInfo = () => {
     switch (sourceType) {
       case 'gallery':
-        return { title: '갤러리', desc: '사진 앨범에서 이미지를 선택해주세요' };
+        return { title: t('generate.fromGallery'), desc: t('generate.selectFromGallery') };
       case 'camera':
-        return { title: '카메라', desc: '카메라로 사진을 찍어주세요' };
+        return { title: t('generate.takePhoto'), desc: t('generate.takePhotoDesc') };
       default:
-        return { title: '샘플', desc: '연습용 샘플 이미지로 시작합니다' };
+        return { title: t('generate.sample'), desc: t('generate.sampleDesc') };
     }
   };
 
@@ -97,7 +99,7 @@ export default function GenerateScreen({ route, navigation }) {
         if (!permission.granted) {
           const newPermission = await ImagePicker.requestCameraPermissionsAsync();
           if (!newPermission.granted) {
-            Alert.alert('권한 필요', '카메라 권한이 필요합니다.\n설정 → 앱 → ColorPlayExpo → 권한에서 허용해주세요.');
+            Alert.alert(t('generate.permissionRequired'), t('generate.cameraPermissionMessage'));
             return;
           }
         }
@@ -113,7 +115,7 @@ export default function GenerateScreen({ route, navigation }) {
         if (!permission.granted) {
           const newPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
           if (!newPermission.granted) {
-            Alert.alert('권한 필요', '갤러리 접근 권한이 필요합니다.\n설정 → 앱 → ColorPlayExpo → 권한에서 허용해주세요.');
+            Alert.alert(t('generate.permissionRequired'), t('generate.galleryPermissionMessage'));
             return;
           }
         }
@@ -139,13 +141,17 @@ export default function GenerateScreen({ route, navigation }) {
         return;
       }
       setLoading(false);
-      Alert.alert('오류', '이미지를 불러올 수 없습니다.\n앱을 완전히 종료 후 다시 시작해주세요.');
+      Alert.alert(t('common.error'), t('generate.loadImageError'));
     }
   };
 
+  // 다국어 데이터 생성 (렌더링 시점에 호출)
+  const DIFFICULTIES = getDifficulties();
+  const COMPLETION_MODES = getCompletionModes();
+
   const handleGenerate = async () => {
     if (!selectedImage && sourceType !== 'sample') {
-      Alert.alert('이미지 선택', '먼저 이미지를 선택해주세요.');
+      Alert.alert(t('generate.selectImageTitle'), t('generate.selectImageMessage'));
       return;
     }
 
@@ -250,11 +256,11 @@ export default function GenerateScreen({ route, navigation }) {
 
       // 격자 적용 완료 메시지 표시 후 갤러리로 이동
       Alert.alert(
-        '격자 적용 완료',
-        '이미지가 저장되었습니다. 갤러리에서 확인하세요.',
+        t('generate.gridApplied'),
+        t('generate.gridAppliedMessage'),
         [
           {
-            text: '확인',
+            text: t('common.confirm'),
             onPress: () => navigation.navigate('Gallery')
           }
         ]
@@ -262,7 +268,7 @@ export default function GenerateScreen({ route, navigation }) {
     } catch (error) {
       setLoading(false);
       console.error('퍼즐 저장 실패:', error);
-      Alert.alert('저장 실패', error.message || '이미지 저장 중 오류가 발생했습니다.');
+      Alert.alert(t('generate.saveFailed'), error.message || t('generate.saveFailedMessage'));
     }
   };
 
@@ -278,7 +284,7 @@ export default function GenerateScreen({ route, navigation }) {
         />
         <View style={styles.loadingStatusContainer}>
           <ActivityIndicator size="large" color="#1DB954" />
-          <Text style={styles.loadingStatusText}>퍼즐 생성 중...</Text>
+          <Text style={styles.loadingStatusText}>{t('generate.processing')}</Text>
         </View>
       </View>
     );
@@ -294,7 +300,7 @@ export default function GenerateScreen({ route, navigation }) {
             <Text style={styles.backButton}>‹</Text>
           </TouchableOpacity>
           <View style={styles.headerCenter}>
-            <Text style={styles.title}>새 퍼즐 만들기</Text>
+            <Text style={styles.title}>{t('generate.title')}</Text>
           </View>
           <View style={styles.headerRight} />
         </View>
@@ -313,7 +319,7 @@ export default function GenerateScreen({ route, navigation }) {
                   <View style={styles.loadingContainer}>
                     <ActivityIndicator size="large" color="#20B2AA" />
                     <Text style={styles.loadingText}>
-                      {!permissionReady ? '초기화 중...' : '불러오는 중...'}
+                      {!permissionReady ? t('generate.initializing') : t('common.loading')}
                     </Text>
                   </View>
                 ) : (
@@ -322,7 +328,7 @@ export default function GenerateScreen({ route, navigation }) {
                       {sourceType === 'camera' ? '📸' : '🖼️'}
                     </Text>
                     <Text style={styles.imagePickerText}>{sourceInfo.desc}</Text>
-                    <Text style={styles.imagePickerButton}>탭하여 선택</Text>
+                    <Text style={styles.imagePickerButton}>{t('generate.tapToSelect')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -330,7 +336,7 @@ export default function GenerateScreen({ route, navigation }) {
               <View style={styles.selectedImageContainer}>
                 <Image source={{ uri: selectedImage.uri }} style={styles.selectedImage} />
                 <TouchableOpacity style={styles.changeImageButton} onPress={() => pickImage(0)}>
-                  <Text style={styles.changeImageText}>이미지 변경</Text>
+                  <Text style={styles.changeImageText}>{t('generate.changeImage')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -339,7 +345,7 @@ export default function GenerateScreen({ route, navigation }) {
 
         {/* Difficulty Selection */}
         <View style={styles.content}>
-          <Text style={styles.sectionTitle}>난이도 선택 (색상 개수)</Text>
+          <Text style={styles.sectionTitle}>{t('generate.difficulty')}</Text>
 
           {DIFFICULTIES.map((diff) => (
             <TouchableOpacity
@@ -359,7 +365,7 @@ export default function GenerateScreen({ route, navigation }) {
                   {diff.name}
                 </Text>
                 <Text style={styles.difficultyDesc}>
-                  {diff.colors}가지 색상 · {diff.gridSize}×{diff.gridSize} 격자
+                  {t('generate.colorGrid', { colors: diff.colors, gridSize: diff.gridSize })}
                 </Text>
               </View>
               {selectedDifficulty === diff.id && (
@@ -373,7 +379,7 @@ export default function GenerateScreen({ route, navigation }) {
 
         {/* Completion Mode Selection */}
         <View style={styles.content}>
-          <Text style={styles.sectionTitle}>완성 모드 선택</Text>
+          <Text style={styles.sectionTitle}>{t('generate.completionMode')}</Text>
 
           {COMPLETION_MODES.map((mode) => (
             <TouchableOpacity
@@ -417,7 +423,7 @@ export default function GenerateScreen({ route, navigation }) {
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text style={styles.generateButtonText}>
-                {selectedImage ? '격자 적용하기' : '이미지 선택 필요'}
+                {selectedImage ? t('generate.createPuzzle') : t('generate.selectImageRequired')}
               </Text>
             )}
           </TouchableOpacity>

@@ -20,6 +20,16 @@ class PaintCanvasModule : Module() {
       currentView?.captureThumbnail(size)
     }
 
+    // 🗺️ 미니맵 이미지 캡처 (음영 + 색칠된 부분)
+    Function("getMinimapImage") { size: Int ->
+      currentView?.captureThumbnail(size)
+    }
+
+    // 🗺️ 미니맵 터치로 뷰포트 이동
+    Function("setViewportPosition") { x: Float, y: Float ->
+      currentView?.setViewportPosition(x, y)
+    }
+
     View(PaintCanvasView::class) {
       // View 생성 시 참조 저장
       OnViewDidUpdateProps { view: PaintCanvasView ->
@@ -79,7 +89,7 @@ class PaintCanvasModule : Module() {
         view.setCompletionMode(mode)
       }
 
-      Events("onCellPainted", "onCanvasReady")
+      Events("onCellPainted", "onCanvasReady", "onViewportChange")
     }
   }
 }

@@ -1,13 +1,30 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert, Image, StatusBar } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert, Image, StatusBar, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView, captureCanvas, captureThumbnail } from 'paint-canvas-native';
+import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
+import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
+import { t, addLanguageChangeListener } from '../locales';
+
+// 🎯 광고 ID 설정
+// - 정식 ID (플레이스토어): 'ca-app-pub-8246295829048098/7057199542'
+// - 테스트 ID: 'ca-app-pub-3940256099942544/6300978111'
+// - 비활성화: null
+const adUnitId = null;  // 개발자 테스트용 - 광고 비활성화
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// 🎨 팔레트 버튼 크기 계산 (화면 너비 기반)
+// 화면 너비 - 패딩(16) - 되돌리기버튼(34) - gap(4) - 팔레트패딩(8*2)
+// 한 줄에 9개 버튼, gap 2px
+const PALETTE_AVAILABLE_WIDTH = SCREEN_WIDTH - 16 - 34 - 4 - 16;
+const BUTTONS_PER_ROW = 9;
+const BUTTON_GAP = 2;
+const COLOR_BUTTON_SIZE = Math.floor((PALETTE_AVAILABLE_WIDTH - (BUTTONS_PER_ROW - 1) * BUTTON_GAP) / BUTTONS_PER_ROW);
 
 // 🖼️ 로딩 화면 이미지
 const loadingImage = require('../../assets/loading-image.png');
@@ -39,9 +56,9 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance }) => {
 
 const colorButtonStyles = StyleSheet.create({
   button: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: COLOR_BUTTON_SIZE,
+    height: COLOR_BUTTON_SIZE,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -183,6 +200,22 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 🔍 디버그 로그 상태 (프로덕션에서는 비활성화)
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebugPanel, setShowDebugPanel] = useState(__DEV__ ? false : false); // 기본 비활성화 (성능)
+
+  // 🗺️ 미니맵 상태
+  const [showMinimap, setShowMinimap] = useState(false);
+  const [viewport, setViewport] = useState({ x: 0, y: 0, width: 1, height: 1 });
+  const [minimapImage, setMinimapImage] = useState(null);
+  const minimapUpdateRef = useRef(null);
+
+  // 📢 뒤로가기 핸들러 (5회마다 전면 광고)
+  const handleBackPress = useCallback(() => {
+    showBackNavigationAd(() => {
+      navigation.goBack();
+    });
+  }, [navigation]);
+
+  // ✨ 되돌리기 버튼 반짝임 애니메이션
+  const undoPulseAnim = useRef(new Animated.Value(1)).current;
 
   // 고유 게임 ID (puzzleId 기반) - 일관된 저장/복원을 위해 puzzleId 사용
   // puzzleId가 없으면 imageUri 기반으로 폴백 (하위 호환성)
@@ -347,12 +380,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           completedAt: new Date().toISOString()
         });
 
-        // 완성 알림
-        Alert.alert(
-          '🎉 축하합니다!',
-          '퍼즐을 완성했습니다!\n갤러리에서 작품을 확인하세요.',
-          [{ text: '확인', style: 'default' }]
-        );
+        // 📢 퍼즐 완료 시 전면 광고 표시 후 알림
+        showPuzzleCompleteAd(() => {
+          Alert.alert(
+            t('play.completeTitle'),
+            t('play.completeMessage'),
+            [{ text: t('common.confirm'), style: 'default' }]
+          );
+        });
       } else {
         console.warn('⚠️ 캔버스 캡처 실패 (null 반환)');
       }
@@ -471,6 +506,71 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     });
   }, [showDebugPanel]);
 
+  // 🗺️ 미니맵 이미지 갱신 함수
+  const updateMinimapImage = useCallback(() => {
+    if (!showMinimap) return;
+
+    // 디바운스: 300ms 내 중복 호출 방지
+    if (minimapUpdateRef.current) {
+      clearTimeout(minimapUpdateRef.current);
+    }
+
+    minimapUpdateRef.current = setTimeout(() => {
+      try {
+        const base64 = getMinimapImage(120);
+        if (base64) {
+          setMinimapImage(`data:image/png;base64,${base64}`);
+        }
+      } catch (e) {
+        console.warn('미니맵 이미지 갱신 실패:', e);
+      }
+    }, 300);
+  }, [showMinimap]);
+
+  // 🗺️ 미니맵 열릴 때 이미지 갱신
+  useEffect(() => {
+    if (showMinimap && isNativeReady) {
+      updateMinimapImage();
+    }
+  }, [showMinimap, isNativeReady, updateMinimapImage]);
+
+  // ✨ 틀린 부분 있을 때 되돌리기 버튼 반짝임
+  useEffect(() => {
+    if (wrongCells.size > 0 && !undoMode) {
+      // 반짝임 애니메이션 시작
+      const pulseAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(undoPulseAnim, {
+            toValue: 0.4,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(undoPulseAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseAnimation.start();
+      return () => pulseAnimation.stop();
+    } else {
+      // 애니메이션 정지 및 원래대로
+      undoPulseAnim.setValue(1);
+    }
+  }, [wrongCells.size, undoMode, undoPulseAnim]);
+
+  // 🗺️ 뷰포트 변경 핸들러 (미니맵용)
+  const handleViewportChange = useCallback((event) => {
+    const { viewportX, viewportY, viewportWidth, viewportHeight } = event.nativeEvent;
+    setViewport({
+      x: viewportX,
+      y: viewportY,
+      width: viewportWidth,
+      height: viewportHeight
+    });
+  }, []);
+
   // 셀 칠해짐 이벤트 핸들러 (⚡ 최적화: 불필요한 Set 재생성 방지)
   // 🔧 버그 수정: wrongCells를 의존성에서 제거하고, setWrongCells의 함수형 업데이트로 현재값 참조
   const handleCellPainted = useCallback((event) => {
@@ -526,7 +626,10 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       });
       setScore(prev => Math.max(0, prev - 5));
     }
-  }, [undoMode]);
+
+    // 🗺️ 미니맵 갱신 (색칠할 때마다)
+    updateMinimapImage();
+  }, [undoMode, updateMinimapImage]);
 
   // 색상 선택 핸들러 (⚡ 최적화: 로그 제거)
   const handleColorSelect = useCallback((color) => {
@@ -626,24 +729,26 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       <View style={styles.paletteContainer}>
         <View style={styles.paletteWithUndo}>
           {/* 되돌리기 버튼 - 팔레트 왼쪽에 배치 */}
-          <TouchableOpacity
-            style={[
-              styles.undoButtonPalette,
-              undoMode && styles.undoButtonActive,
-              wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
-            ]}
-            onPress={() => {
-              if (undoMode) {
-                setUndoMode(false);
-              } else if (wrongCells.size > 0) {
-                setUndoMode(true);
-              }
-            }}
-            disabled={wrongCells.size === 0 && !undoMode}
-          >
-            <Text style={styles.undoIcon}>↩️</Text>
-            <Text style={styles.undoCount}>{wrongCells.size}</Text>
-          </TouchableOpacity>
+          <Animated.View style={{ opacity: undoPulseAnim }}>
+            <TouchableOpacity
+              style={[
+                styles.undoButtonPalette,
+                undoMode && styles.undoButtonActive,
+                wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
+              ]}
+              onPress={() => {
+                if (undoMode) {
+                  setUndoMode(false);
+                } else if (wrongCells.size > 0) {
+                  setUndoMode(true);
+                }
+              }}
+              disabled={wrongCells.size === 0 && !undoMode}
+            >
+              <Text style={styles.undoIcon}>↩</Text>
+              <Text style={styles.undoCount}>{wrongCells.size}</Text>
+            </TouchableOpacity>
+          </Animated.View>
 
           {/* 색상 팔레트 */}
           <View style={styles.palette}>
@@ -660,7 +765,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         </View>
       </View>
     );
-  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size]);
+  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size, undoPulseAnim]);
 
   if (isTablet) {
     // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
@@ -668,7 +773,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+          <TouchableOpacity onPress={handleBackPress} style={styles.backButtonContainer}>
             <Text style={styles.backButton}>‹</Text>
           </TouchableOpacity>
 
@@ -750,7 +855,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
+        <TouchableOpacity onPress={handleBackPress} style={styles.backButtonContainer}>
           <Text style={styles.backButton}>‹</Text>
         </TouchableOpacity>
 
@@ -760,13 +865,22 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             <Text style={styles.score}>{score}</Text>
           </View>
         </View>
+
+        {/* 🗺️ 미니맵 토글 버튼 */}
+        <TouchableOpacity
+          style={[styles.minimapToggle, showMinimap && styles.minimapToggleActive]}
+          onPress={() => setShowMinimap(!showMinimap)}
+        >
+          <Text style={styles.minimapToggleIcon}>🗺️</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Native Canvas with Zoom (Native handles gestures AND rendering) */}
       <View style={styles.canvasContainer}>
         {cells.length > 0 && (
-          <PaintCanvasView
-            key="paint-canvas-view"
+          <>
+            <PaintCanvasView
+              key="paint-canvas-view"
             style={styles.canvas}
             gridSize={gridSize}
             cells={cells}
@@ -782,12 +896,74 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
             onDebugLog={handleDebugLog}
+            onViewportChange={handleViewportChange}
           />
+
+          {/* 🗺️ 미니맵 - 오른쪽 하단에 색칠 맵 + 현재 위치 표시 */}
+          {showMinimap && (
+            <TouchableOpacity
+              style={styles.minimapContainer}
+              activeOpacity={0.9}
+              onPress={(event) => {
+                // 터치 위치 → 미니맵 내 비율 계산
+                const { locationX, locationY } = event.nativeEvent;
+                const minimapSize = 120; // styles.minimapContainer 크기
+                const targetX = locationX / minimapSize;
+                const targetY = locationY / minimapSize;
+                // Native에 뷰포트 이동 요청
+                setViewportPosition(targetX, targetY);
+              }}
+            >
+              {/* 색칠 맵 이미지 (음영 + 색칠된 부분) */}
+              {minimapImage ? (
+                <Image
+                  source={{ uri: minimapImage }}
+                  style={styles.minimapImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={[styles.minimapImage, styles.minimapPlaceholder]}>
+                  <ActivityIndicator size="small" color={SpotifyColors.primary} />
+                </View>
+              )}
+              {/* 현재 뷰포트 위치 표시 박스 */}
+              <View
+                style={[
+                  styles.minimapViewport,
+                  {
+                    left: `${viewport.x * 100}%`,
+                    top: `${viewport.y * 100}%`,
+                    width: `${viewport.width * 100}%`,
+                    height: `${viewport.height * 100}%`,
+                  }
+                ]}
+                pointerEvents="none"
+              />
+              {/* 라벨 */}
+              <View style={styles.minimapOverlay} pointerEvents="none">
+                <Text style={styles.minimapLabel}>{t('play.currentPosition')}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+          </>
         )}
       </View>
 
       {/* 색상 팔레트 */}
       {renderPalette()}
+
+      {/* 📢 광고 배너 영역 (광고 ID가 있을 때만 표시) */}
+      {adUnitId && (
+        <View style={styles.adBannerContainer}>
+          <BannerAd
+            unitId={adUnitId}
+            size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+            requestOptions={{
+              requestNonPersonalizedAdsOnly: true,
+            }}
+          />
+        </View>
+      )}
 
       {/* 🚀 로딩 오버레이 - Native 캔버스의 첫 렌더링 완료까지 표시 */}
       {!isNativeReady && (
@@ -800,7 +976,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           />
           <View style={styles.loadingStatusContainer}>
             <ActivityIndicator size="large" color="#1DB954" />
-            <Text style={styles.loadingStatusText}>캔버스 준비 중...</Text>
+            <Text style={styles.loadingStatusText}>{t('play.preparing')}</Text>
           </View>
         </View>
       )}
@@ -886,10 +1062,10 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   undoIcon: {
-    fontSize: 18,
+    fontSize: 14,
   },
   undoCount: {
-    fontSize: SpotifyFonts.base,
+    fontSize: 10,
     fontWeight: SpotifyFonts.bold,
     color: SpotifyColors.textPrimary,
   },
@@ -930,31 +1106,32 @@ const styles = StyleSheet.create({
   paletteWithUndo: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: 4,
   },
   undoButtonPalette: {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: SpotifyColors.error,
-    paddingHorizontal: SpotifySpacing.sm,
-    paddingVertical: SpotifySpacing.sm,
-    borderRadius: SpotifyRadius.md,
-    minWidth: 40,
-    height: 70,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    borderRadius: SpotifyRadius.sm,
+    minWidth: 34,
+    height: COLOR_BUTTON_SIZE * 2 + BUTTON_GAP,
   },
   palette: {
     flex: 1,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
-    justifyContent: 'center',
+    gap: BUTTON_GAP,
+    justifyContent: 'flex-start',
     alignItems: 'flex-start',
+    alignContent: 'flex-start',
   },
   colorButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: COLOR_BUTTON_SIZE,
+    height: COLOR_BUTTON_SIZE,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
@@ -1155,5 +1332,79 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 12,
     fontWeight: '500',
+  },
+  // 🗺️ 미니맵 토글 버튼 스타일
+  minimapToggle: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.md,
+    borderWidth: 2,
+    borderColor: SpotifyColors.divider,
+  },
+  minimapToggleActive: {
+    backgroundColor: SpotifyColors.primary,
+    borderColor: SpotifyColors.primary,
+  },
+  minimapToggleIcon: {
+    fontSize: 20,
+  },
+  // 🗺️ 미니맵 컨테이너 스타일
+  minimapContainer: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    width: 120,
+    height: 120,
+    borderRadius: SpotifyRadius.md,
+    overflow: 'hidden',
+    backgroundColor: SpotifyColors.background,
+    borderWidth: 2,
+    borderColor: SpotifyColors.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 10,
+  },
+  minimapImage: {
+    width: '100%',
+    height: '100%',
+  },
+  minimapPlaceholder: {
+    backgroundColor: SpotifyColors.backgroundElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  minimapOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingVertical: 2,
+    alignItems: 'center',
+  },
+  minimapLabel: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  // 🗺️ 현재 뷰포트 위치 표시 박스
+  minimapViewport: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderColor: '#FF4444',
+    backgroundColor: 'rgba(255, 68, 68, 0.2)',
+  },
+  // 📢 광고 배너 스타일
+  adBannerContainer: {
+    width: '100%',
+    minHeight: 50,
+    backgroundColor: SpotifyColors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

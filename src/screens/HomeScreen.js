@@ -1,11 +1,22 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { migratePuzzles } from '../utils/puzzleStorage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+import { t, addLanguageChangeListener } from '../locales';
 
 export default function HomeScreen({ navigation }) {
+  const [, forceUpdate] = useState(0);
+
+  // 언어 변경 리스너
+  useEffect(() => {
+    const unsubscribe = addLanguageChangeListener(() => {
+      forceUpdate((n) => n + 1);
+    });
+    return unsubscribe;
+  }, []);
+
   // 앱 시작 시 기존 퍼즐 마이그레이션 (백그라운드 실행)
   useEffect(() => {
     const runMigration = async () => {
@@ -33,8 +44,15 @@ export default function HomeScreen({ navigation }) {
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>ColorPlay</Text>
-            <Text style={styles.subtitle}>색칠 퍼즐 게임</Text>
+            {/* 설정 버튼 */}
+            <TouchableOpacity
+              style={styles.settingsButton}
+              onPress={() => navigation.navigate('Settings')}
+            >
+              <Text style={styles.settingsIcon}>⚙️</Text>
+            </TouchableOpacity>
+            <Text style={styles.title}>{t('home.title')}</Text>
+            <Text style={styles.subtitle}>{t('home.subtitle')}</Text>
           </View>
 
           {/* Main Content */}
@@ -56,8 +74,8 @@ export default function HomeScreen({ navigation }) {
                     <Text style={styles.buttonIcon}>🖼️</Text>
                   </View>
                   <View style={styles.buttonTextContainer}>
-                    <Text style={styles.buttonText}>갤러리</Text>
-                    <Text style={styles.buttonSubtext}>격자 적용된 사진 보기</Text>
+                    <Text style={styles.buttonText}>{t('home.gallery')}</Text>
+                    <Text style={styles.buttonSubtext}>{t('gallery.emptyDesc')}</Text>
                   </View>
                   <Text style={styles.chevron}>›</Text>
                 </View>
@@ -81,8 +99,8 @@ export default function HomeScreen({ navigation }) {
                     <Text style={styles.buttonIcon}>➕</Text>
                   </View>
                   <View style={styles.buttonTextContainer}>
-                    <Text style={styles.buttonText}>새 퍼즐 만들기</Text>
-                    <Text style={styles.buttonSubtext}>사진을 격자로 변환하기</Text>
+                    <Text style={styles.buttonText}>{t('home.newPuzzle')}</Text>
+                    <Text style={styles.buttonSubtext}>{t('generate.selectImage')}</Text>
                   </View>
                   <Text style={styles.chevron}>›</Text>
                 </View>
@@ -114,10 +132,25 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingTop: 80,
+    paddingTop: 60,
     paddingHorizontal: SpotifySpacing.xl,
     paddingBottom: 60,
     alignItems: 'center',
+    position: 'relative',
+  },
+  settingsButton: {
+    position: 'absolute',
+    top: 20,
+    right: SpotifySpacing.base,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: SpotifyColors.backgroundLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsIcon: {
+    fontSize: 22,
   },
   title: {
     fontSize: SpotifyFonts.display,
