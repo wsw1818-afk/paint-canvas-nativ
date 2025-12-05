@@ -89,7 +89,7 @@ class PaintCanvasModule : Module() {
         view.setCompletionMode(mode)
       }
 
-      Events("onCellPainted", "onCanvasReady", "onViewportChange")
+      Events("onCellPainted", "onCanvasReady", "onViewportChange", "onNativeLog")
     }
   }
 }

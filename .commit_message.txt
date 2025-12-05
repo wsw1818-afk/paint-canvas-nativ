@@ -1,1 +1,1 @@
-🎯 연속 핀치 줌 (Google Maps 스타일)
+🔧 stepZoom 즉시 적용: isFromStepZoom 조건 추가, 상세 로그 출력

@@ -515,6 +515,12 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     });
   }, [showDebugPanel]);
 
+  // 🔧 Native 로그를 Metro 터널로 전달 (console.log)
+  const handleNativeLog = useCallback((event) => {
+    const { tag, message } = event.nativeEvent;
+    console.log(`[${tag}] ${message}`);
+  }, []);
+
   // 🗺️ 미니맵 이미지 갱신 함수
   const updateMinimapImage = useCallback(() => {
     if (!showMinimap) return;
@@ -827,6 +833,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               onCellPainted={handleCellPainted}
               onCanvasReady={handleCanvasReady}
               onDebugLog={handleDebugLog}
+              onNativeLog={handleNativeLog}
             />
           </View>
 
@@ -905,6 +912,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
             onDebugLog={handleDebugLog}
+            onNativeLog={handleNativeLog}
             onViewportChange={handleViewportChange}
           />
 
