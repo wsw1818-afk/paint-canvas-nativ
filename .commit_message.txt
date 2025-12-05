@@ -1,1 +1,1 @@
-🧹 불필요 파일 정리: backup 파일 삭제, gitignore에 nul 추가
+🎯 연속 핀치 줌 (Google Maps 스타일)

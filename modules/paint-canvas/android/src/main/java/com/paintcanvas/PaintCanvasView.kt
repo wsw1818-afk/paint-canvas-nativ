@@ -736,40 +736,22 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             // ⚠️ 안전 체크
             if (pinchStartSpan <= 0f || initialSpanForPanCheck <= 0f) return true
 
-            // 🐛 팬 모드면 줌 완전 차단
-            if (isPanningOnly) return true
+            // 🚫 팬 모드일 때는 줌 완전 차단 (이동 중 확대/축소 방지)
+            if (isPanningOnly) {
+                return true  // 줌 무시, 팬만 허용
+            }
 
-            // 🎯 초기 간격 대비 변화량으로 줌 여부 결정 (누적 판단)
+            // 🎯 초기 간격 대비 변화량으로 줌 여부 결정
             val spanRatioFromInitial = detector.currentSpan / initialSpanForPanCheck
 
-            // 🐛 버그 수정: 초기 간격 대비 25% 이상 변해야 줌 동작 (이동 중 의도치 않은 줌 방지)
-            if (spanRatioFromInitial > 0.75f && spanRatioFromInitial < 1.25f) {
-                return true  // 줌 무시, 팬만 동작
+            // 🐛 5% 데드존: 손가락 간격 5% 이상 변화 시 줌 작동 (더 민감하게)
+            if (spanRatioFromInitial > 0.95f && spanRatioFromInitial < 1.05f) {
+                return true  // 줌 무시
             }
 
-            // 🎯 5단계 줌: 확대 1x→80%→100%, 축소 100%→80%→50%→1x
-            val spanRatio = detector.currentSpan / pinchStartSpan
-            val zoomTarget80 = maxZoom * 0.8f
-            val zoomTarget50 = maxZoom * 0.5f
-
-            // ⚡ 가속 줌: 손가락 50% 벌리면/모으면 목표까지 도달
-            var newScale = if (spanRatio >= 1f) {
-                // 🔼 확대
-                val expandTarget = if (pinchStartScale < zoomTarget80) zoomTarget80 else maxZoom
-                val progress = ((spanRatio - 1f) / 0.5f).coerceIn(0f, 1f)
-                pinchStartScale + (expandTarget - pinchStartScale) * progress
-            } else {
-                // 🔽 축소
-                val shrinkTarget = when {
-                    pinchStartScale > zoomTarget80 -> zoomTarget80
-                    pinchStartScale > zoomTarget50 -> zoomTarget50
-                    else -> 1f
-                }
-                val progress = ((1f - spanRatio) / 0.5f).coerceIn(0f, 1f)
-                pinchStartScale - (pinchStartScale - shrinkTarget) * progress
-            }
-
-            newScale = newScale.coerceIn(1f, maxZoom)
+            // 🎯 연속 핀치 줌 (Google Maps 스타일) - 손가락 움직임에 따라 자연스럽게 줌
+            val scaleFactor_new = detector.scaleFactor  // 현재 프레임의 스케일 변화율
+            var newScale = (scaleFactor * scaleFactor_new).coerceIn(1f, maxZoom)
 
             // 포커스 포인트 기준 줌 적용
             val focusX = detector.focusX
@@ -780,14 +762,16 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             scaleFactor = newScale
             applyBoundaries()
-            invalidate()
+            throttledInvalidate()  // ⚡ 줌 병목 방지: 스로틀링된 invalidate
 
             return true
         }
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            // 🐛 팬 모드면 줌 시작 차단
-            if (isPanningOnly) return false
+            // 🚫 팬 모드일 때는 줌 시작 거부 (터치 드래그 방해 방지)
+            if (isPanningOnly) {
+                return false  // 줌 제스처 거부
+            }
 
             touchMode = TouchMode.ZOOM
             isPinching = true
@@ -1125,7 +1109,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 touchStartX = event.x  // ⚡ 터치 시작 위치 저장
                 touchStartY = event.y
                 activePointerId = event.getPointerId(0)
-                preventPaintOnce = false
+                // 🐛 줌 중이면 색칠 차단 (핀치 줌 후 손가락 뗄 때 색칠 방지)
+                preventPaintOnce = isPinching || touchMode == TouchMode.ZOOM
                 allowPainting = false
                 touchDownTime = System.currentTimeMillis()
                 hasMoved = false  // ⚡ 이동 여부 리셋
@@ -1158,7 +1143,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_MOVE -> {
                 when (event.pointerCount) {
                     1 -> {
-                        if (!preventPaintOnce) {
+                        // 🐛 줌 중이거나 핀치 직후면 색칠 차단
+                        if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM) {
                             val timeSinceDown = System.currentTimeMillis() - touchDownTime
                             val dx = event.x - touchStartX
                             val dy = event.y - touchStartY
@@ -1217,8 +1203,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             MotionEvent.ACTION_UP -> {
                 val timeSinceDown = System.currentTimeMillis() - touchDownTime
-                // ⚡ 빠른 탭: 300ms 이내, 이동 없음, 두 손가락 아님 → 색칠
-                if (!preventPaintOnce && timeSinceDown < 300L && !hasMoved) {
+                // ⚡ 빠른 탭: 300ms 이내, 이동 없음, 두 손가락 아님, 줌 아님 → 색칠
+                // 🐛 줌 중이거나 핀치 직후면 색칠 차단
+                if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && timeSinceDown < 300L && !hasMoved) {
                     handlePainting(event.x, event.y)
                 }
 
