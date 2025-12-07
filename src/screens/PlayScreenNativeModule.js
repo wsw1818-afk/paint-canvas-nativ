@@ -216,6 +216,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
   // ✨ 되돌리기 버튼 반짝임 애니메이션
   const undoPulseAnim = useRef(new Animated.Value(1)).current;
+  // 🗺️ 미니맵 틀린 셀 깜빡임 애니메이션
+  const wrongCellFlashAnim = useRef(new Animated.Value(0)).current;
 
   // 고유 게임 ID (puzzleId 기반) - 일관된 저장/복원을 위해 puzzleId 사용
   // puzzleId가 없으면 imageUri 기반으로 폴백 (하위 호환성)
@@ -574,6 +576,30 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       undoPulseAnim.setValue(1);
     }
   }, [wrongCells.size, undoMode, undoPulseAnim]);
+
+  // 🗺️ 미니맵에서 틀린 셀 깜빡임 애니메이션
+  useEffect(() => {
+    if (wrongCells.size > 0 && showMinimap) {
+      const flashAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(wrongCellFlashAnim, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(wrongCellFlashAnim, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      flashAnimation.start();
+      return () => flashAnimation.stop();
+    } else {
+      wrongCellFlashAnim.setValue(0);
+    }
+  }, [wrongCells.size, showMinimap, wrongCellFlashAnim]);
 
   // 🗺️ 뷰포트 변경 핸들러 (미니맵용)
   const handleViewportChange = useCallback((event) => {
@@ -943,6 +969,32 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                   <ActivityIndicator size="small" color={SpotifyColors.primary} />
                 </View>
               )}
+              {/* 🚨 틀린 셀 위치 빨간 점 표시 (깜빡임) */}
+              {wrongCells.size > 0 && Array.from(wrongCells).map((cellKey) => {
+                const [row, col] = cellKey.split('-').map(Number);
+                const minimapSize = 120;
+                const cellSize = minimapSize / gridSize;
+                return (
+                  <Animated.View
+                    key={cellKey}
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: col * cellSize + cellSize / 2 - 4,
+                      top: row * cellSize + cellSize / 2 - 4,
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: '#FF0000',
+                      opacity: wrongCellFlashAnim,
+                      shadowColor: '#FF0000',
+                      shadowOffset: { width: 0, height: 0 },
+                      shadowOpacity: 1,
+                      shadowRadius: 4,
+                    }}
+                  />
+                );
+              })}
               {/* 현재 뷰포트 위치 표시 박스 */}
               <View
                 style={[
@@ -958,7 +1010,11 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               />
               {/* 라벨 */}
               <View style={styles.minimapOverlay} pointerEvents="none">
-                <Text style={styles.minimapLabel}>{t('play.currentPosition')}</Text>
+                <Text style={styles.minimapLabel}>
+                  {wrongCells.size > 0
+                    ? `⚠️ ${wrongCells.size}개 오류`
+                    : t('play.currentPosition')}
+                </Text>
               </View>
             </TouchableOpacity>
           )}

@@ -1,1 +1,1 @@
-🔧 stepZoom 즉시 적용: isFromStepZoom 조건 추가, 상세 로그 출력
+🚨 1x 배율 틀린 셀 깜빡임 + 줌 로그 대폭 최적화
