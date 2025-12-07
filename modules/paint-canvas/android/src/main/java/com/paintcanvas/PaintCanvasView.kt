@@ -437,49 +437,62 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 // 1. 이미지 로드 (IO 스레드)
                 val loadedBitmap = loadBitmap(uri)
 
-                // 2. 텍스처 적용 (CPU 집약적 작업)
-                val pattern = filledCellPatternBitmap
-                val texturedBitmap = if (loadedBitmap != null && pattern != null && !pattern.isRecycled) {
-                    applyTextureToOriginalImage(loadedBitmap, pattern)
-                } else {
-                    loadedBitmap
-                }
-
                 val loadTime = System.currentTimeMillis() - startTime
-                android.util.Log.d("PaintCanvas", "⚡ 비동기 이미지 로드 완료: ${loadTime}ms")
+                android.util.Log.d("PaintCanvas", "⚡ 이미지 로드: ${loadTime}ms")
 
-                // 3. parsedColorMap 업데이트 (백그라운드에서 계속)
-                // ⚡ 최적화: 메인 스레드 블로킹 방지
-                val localCells = cells.toList()  // 스냅샷 복사
+                // 2. parsedColorMap 업데이트 (이미지와 병렬로 처리 가능)
+                // ⚡ 최적화: getPixels() 배치 처리로 10배+ 속도 향상
                 val localGridSize = gridSize
                 val tempColorMap = HashMap<Int, Int>()
 
-                if (loadedBitmap != null && !loadedBitmap.isRecycled && localCells.isNotEmpty()) {
+                if (loadedBitmap != null && !loadedBitmap.isRecycled && localGridSize > 0) {
+                    val colorMapStart = System.currentTimeMillis()
                     val bw = loadedBitmap.width
                     val bh = loadedBitmap.height
-                    for (cell in localCells) {
-                        val cellIndex = cell.row * localGridSize + cell.col
-                        // getOriginalPixelColor 로직 인라인 (백그라운드 호환)
-                        val srcX = (cell.col * bw / localGridSize + bw / localGridSize / 2).coerceIn(0, bw - 1)
-                        val srcY = (cell.row * bh / localGridSize + bh / localGridSize / 2).coerceIn(0, bh - 1)
-                        tempColorMap[cellIndex] = loadedBitmap.getPixel(srcX, srcY)
+
+                    // ⚡ 전체 비트맵 픽셀을 한 번에 읽기 (getPixel 루프 대비 10배+ 빠름)
+                    val allPixels = IntArray(bw * bh)
+                    loadedBitmap.getPixels(allPixels, 0, bw, 0, 0, bw, bh)
+
+                    // 셀 중심점 색상 추출 (배열 인덱싱만 사용)
+                    val cellWidth = bw.toFloat() / localGridSize
+                    val cellHeight = bh.toFloat() / localGridSize
+                    val halfCellWidth = cellWidth / 2f
+                    val halfCellHeight = cellHeight / 2f
+
+                    for (row in 0 until localGridSize) {
+                        val srcY = (row * cellHeight + halfCellHeight).toInt().coerceIn(0, bh - 1)
+                        val rowOffset = row * localGridSize
+                        val pixelRowOffset = srcY * bw
+
+                        for (col in 0 until localGridSize) {
+                            val srcX = (col * cellWidth + halfCellWidth).toInt().coerceIn(0, bw - 1)
+                            val cellIndex = rowOffset + col
+                            tempColorMap[cellIndex] = allPixels[pixelRowOffset + srcX]
+                        }
                     }
-                    android.util.Log.d("PaintCanvas", "✨ parsedColorMap 준비 완료 (백그라운드): ${localCells.size}개 셀")
+
+                    val colorMapTime = System.currentTimeMillis() - colorMapStart
+                    android.util.Log.d("PaintCanvas", "⚡ parsedColorMap: ${colorMapTime}ms")
                 }
 
-                // 4. 메인 스레드에서 UI 업데이트
+                // 3. 메인 스레드에서 UI 업데이트 (텍스처는 나중에 적용)
                 withContext(Dispatchers.Main) {
                     try {
                         originalBitmap = loadedBitmap
-                        backgroundBitmap = texturedBitmap
+                        backgroundBitmap = loadedBitmap  // ⚡ 먼저 원본으로 표시
 
                         // ⚡ 미리 계산된 colorMap 적용 (단순 대입)
                         parsedColorMap.putAll(tempColorMap)
 
                         isImageLoading = false
                         isImageLoaded = true  // 🚀 이미지 로딩 완료 플래그
-                        android.util.Log.d("PaintCanvas", "✨ 이미지 로드 완료: original=${originalBitmap?.width}x${originalBitmap?.height}, textured=${backgroundBitmap?.width}x${backgroundBitmap?.height}")
+                        val totalTime = System.currentTimeMillis() - startTime
+                        android.util.Log.d("PaintCanvas", "✨ 로딩 완료: ${totalTime}ms (${originalBitmap?.width}x${originalBitmap?.height})")
                         invalidate()  // onDraw에서 notifyCanvasReady 호출
+
+                        // ⚡ 텍스처는 화면 표시 후 백그라운드에서 지연 적용
+                        applyTextureInBackground(loadedBitmap)
                     } catch (e: Exception) {
                         android.util.Log.e("PaintCanvas", "❌ UI 업데이트 오류: ${e.message}")
                         isImageLoading = false
@@ -491,6 +504,27 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     isImageLoading = false
                     invalidate()
                 }
+            }
+        }
+    }
+
+    // ⚡ 텍스처 지연 적용 (로딩 완료 후 백그라운드에서)
+    private fun applyTextureInBackground(bitmap: Bitmap?) {
+        if (bitmap == null || bitmap.isRecycled) return
+        val pattern = filledCellPatternBitmap ?: return
+        if (pattern.isRecycled) return
+
+        imageLoadScope.launch {
+            try {
+                val textured = applyTextureToOriginalImage(bitmap, pattern)
+                withContext(Dispatchers.Main) {
+                    if (!textured.isRecycled) {
+                        backgroundBitmap = textured
+                        invalidate()
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PaintCanvas", "❌ 텍스처 적용 오류: ${e.message}")
             }
         }
     }
@@ -767,91 +801,52 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             onScaleCallCount++
-            val gestureDuration = System.currentTimeMillis() - scaleGestureStartTime
-            val currentScaleChange = kotlin.math.abs(scaleFactor - pinchStartScale)
-
+            // ⚡ 최적화: 로그 제거 (매 프레임 호출되므로 성능 저하)
             // ⚠️ 안전 체크
-            if (pinchStartSpan <= 0f || initialSpanForPanCheck <= 0f) {
-                sendLog("PaintCanvas", "║ ⚠️ onScale[$onScaleCallCount] SKIP: pinchStartSpan=$pinchStartSpan, initialSpan=$initialSpanForPanCheck")
-                return true
-            }
-
-            // 🎯 핀치 줌은 항상 허용 (팬 모드에서도 줌 가능)
-            // isPanningOnly는 onScaleEnd에서 stepZoom 여부만 결정
-
-            // 🎯 초기 간격 대비 변화량으로 줌 여부 결정
-            val spanRatioFromInitial = detector.currentSpan / initialSpanForPanCheck
-
+            if (pinchStartSpan <= 0f || initialSpanForPanCheck <= 0f) return true
             // 🎯 3단계 줌: 연속 줌 비활성화! onScaleEnd에서 stepZoom으로만 줌 처리
-            // 중간 스케일 방지: 1x, 80%, 100%만 허용
-            sendLog("PaintCanvas", "║ 🔄 onScale[$onScaleCallCount] SKIP (3단계 줌 모드) | span=${"%.1f".format(detector.currentSpan)} | ratio=${"%.3f".format(spanRatioFromInitial)} | duration=${gestureDuration}ms")
-            return true  // 연속 줌 무시, onScaleEnd에서 stepZoom 호출
+            return true
         }
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             onScaleCallCount = 0
-
             // 🚫 팬 모드일 때는 줌 시작 거부
             if (isPanningOnly) return false
-
             touchMode = TouchMode.ZOOM
             isPinching = true
             pinchStartScale = scaleFactor
             pinchStartSpan = detector.currentSpan
             scaleGestureStartTime = System.currentTimeMillis()
             zoomAnimator?.cancel()
-
-            sendLog("PaintCanvas", "📐 onScaleBegin: scale=${"%.1f".format(scaleFactor)} span=${"%.0f".format(detector.currentSpan)}px")
+            // ⚡ 최적화: 로그 제거
             return true
         }
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
             val gestureDuration = System.currentTimeMillis() - scaleGestureStartTime
-            val scaleChange = kotlin.math.abs(scaleFactor - pinchStartScale)
-            val timeSinceLastZoom = System.currentTimeMillis() - lastStepZoomTime
-
             // 🔧 span 변화율 분석
-            val currentSpan = detector.currentSpan
-            val spanRatio = if (pinchStartSpan > 0f) currentSpan / pinchStartSpan else 1f
-
-            // 🆕 팬 거리 계산 (TAP 판정에만 사용)
+            val spanRatio = if (pinchStartSpan > 0f) detector.currentSpan / pinchStartSpan else 1f
+            // 팬 거리 계산 (TAP 판정에만 사용)
             val panDistanceForTap = kotlin.math.sqrt(
                 (detector.focusX - twoFingerStartX) * (detector.focusX - twoFingerStartX) +
                 (detector.focusY - twoFingerStartY) * (detector.focusY - twoFingerStartY)
             )
-
-            // 🎯 핀치 줌 판단: span 변화율 + 팬 거리 기준
-            // span 10% 이상 변화 + 팬 거리 150px 미만 = 의도적 핀치 줌
-            // 🐛 수정: panDistance가 크면 팬 제스처이므로 줌 차단
-            val isPinchZoomIn = spanRatio > 1.10f && panDistanceForTap < 150f   // 확대 제스처
-            val isPinchZoomOut = spanRatio < 0.90f && panDistanceForTap < 150f  // 축소 제스처
-
-            // TAP은 span 안정 + 이동 거리 적어야 함
+            // 🎯 핀치 줌 판단
+            val isPinchZoomIn = spanRatio > 1.10f && panDistanceForTap < 150f
+            val isPinchZoomOut = spanRatio < 0.90f && panDistanceForTap < 150f
             val isSpanStable = spanRatio > 0.92f && spanRatio < 1.08f && panDistanceForTap < 50f
 
-            // ⚡ 최적화: 로그 간소화
-            sendLog("PaintCanvas", "📐 onScaleEnd: span=${"%.2f".format(spanRatio)} pan=${"%.0f".format(panDistanceForTap)}px dur=${gestureDuration}ms")
-
-            // 🎯 isPanningOnly면 stepZoom 차단 (팬+줌 동시 사용 시)
-            if (isPanningOnly) {
-                // 무시
+            // 🎯 줌 처리
+            if (!isPanningOnly) {
+                when {
+                    isPinchZoomIn -> stepZoom(detector.focusX, detector.focusY, zoomIn = true)
+                    isPinchZoomOut -> stepZoom(detector.focusX, detector.focusY, zoomIn = false)
+                    isSpanStable && gestureDuration < 300L -> stepZoom(detector.focusX, detector.focusY, zoomIn = true)
+                }
             }
-            // 🎯 핀치 확대 (손가락 벌림) → 다음 단계로!
-            else if (isPinchZoomIn) {
-                stepZoom(detector.focusX, detector.focusY, zoomIn = true)
-            }
-            // 🎯 핀치 축소 (손가락 오므림) → 이전 단계로!
-            else if (isPinchZoomOut) {
-                stepZoom(detector.focusX, detector.focusY, zoomIn = false)
-            }
-            // 🎯 두 손가락 탭 (span 안정 + 이동 없음) → 확대 토글
-            else if (isSpanStable && gestureDuration < 300L) {
-                stepZoom(detector.focusX, detector.focusY, zoomIn = true)
-            }
-
             touchMode = TouchMode.NONE
             isPinching = false
-            isPanningOnly = false  // 🐛 팬 모드 리셋
+            isPanningOnly = false
             initialSpanForPanCheck = 0f
             syncZoomIndex()
         }
@@ -914,8 +909,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 else -> if (scaleFactor > zoomAt80) { currentZoomIndex = 1; zoomAt80 } else { currentZoomIndex = 0; 1f }
             }
         }
-
-        sendLog("PaintCanvas", "🎚️ stepZoom: ${"%.1f".format(scaleFactor)} → ${"%.1f".format(targetScale)} (${if (zoomIn) "IN" else "OUT"})")
+        // ⚡ 최적화: 로그 제거
         animateZoomTo(targetScale, focusX, focusY)
     }
 
@@ -944,42 +938,30 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      */
     private fun animateZoomTo(targetScale: Float, focusX: Float, focusY: Float) {
         // ⚡ 최적화: 변경 없으면 바로 리턴
-        if (kotlin.math.abs(targetScale - scaleFactor) < 0.01f) {
-            sendLog("PaintCanvas", "║ ⚡ animateZoomTo SKIP: 변경 없음")
-            return
-        }
+        if (kotlin.math.abs(targetScale - scaleFactor) < 0.01f) return
 
         val startScale = scaleFactor
-
-        // 기존 애니메이션 취소
         zoomAnimator?.cancel()
-
-        val startTranslateX = translateX
-        val startTranslateY = translateY
 
         // 목표 위치 계산
         val targetTranslateX: Float
         val targetTranslateY: Float
 
         if (targetScale == 1f) {
-            // 1x로 축소시 중앙으로 리셋
             targetTranslateX = (canvasViewWidth - canvasWidth) / 2f
             targetTranslateY = (canvasViewHeight - canvasWidth) / 2f
         } else {
-            // 포커스 포인트를 기준으로 확대/축소
             val scaleDelta = targetScale / startScale
-            targetTranslateX = focusX - (focusX - startTranslateX) * scaleDelta
-            targetTranslateY = focusY - (focusY - startTranslateY) * scaleDelta
+            targetTranslateX = focusX - (focusX - translateX) * scaleDelta
+            targetTranslateY = focusY - (focusY - translateY) * scaleDelta
         }
 
-        // ⚡ 3단계 줌은 항상 즉시 적용 (애니메이션 없음)
+        // ⚡ 즉시 적용
         scaleFactor = targetScale
         translateX = targetTranslateX
         translateY = targetTranslateY
         applyBoundaries()
         invalidate()
-
-        sendLog("PaintCanvas", "⚡ ZOOM: ${"%.1f".format(startScale)} → ${"%.1f".format(scaleFactor)}")
     }
 
     init {
@@ -1257,18 +1239,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     val dx = event.getX(0) - event.getX(1)
                     val dy = event.getY(0) - event.getY(1)
                     initialSpanForPanCheck = kotlin.math.sqrt(dx * dx + dy * dy)
-                    isPanningOnly = false  // 초기화
-
-                    sendLog("PaintCanvas", "╔════════════════════════════════════════╗")
-                    sendLog("PaintCanvas", "║ 👆👆 ACTION_POINTER_DOWN (두 손가락)    ║")
-                    sendLog("PaintCanvas", "╠════════════════════════════════════════╣")
-                    sendLog("PaintCanvas", "║ finger0=(${event.getX(0).toInt()}, ${event.getY(0).toInt()})")
-                    sendLog("PaintCanvas", "║ finger1=(${event.getX(1).toInt()}, ${event.getY(1).toInt()})")
-                    sendLog("PaintCanvas", "║ centroid=(${centroidX.toInt()}, ${centroidY.toInt()})")
-                    sendLog("PaintCanvas", "║ initialSpan=${"%.1f".format(initialSpanForPanCheck)}px")
-                    sendLog("PaintCanvas", "║ currentScale=$scaleFactor, maxZoom=$maxZoom")
-                    sendLog("PaintCanvas", "║ isPanningOnly=$isPanningOnly")
-                    sendLog("PaintCanvas", "╚════════════════════════════════════════╝")
+                    isPanningOnly = false
+                    // ⚡ 최적화: 상세 로그 제거
                 }
             }
 
@@ -1328,7 +1300,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         twoFingerLastY = centroidY
 
                         applyBoundaries()
-                        invalidate()
+                        // ⚡ 최적화: 팬 중 스로틀링된 invalidate (60fps 제한)
+                        throttledInvalidate()
                     }
                     else -> {
                         preventPaintOnce = true
@@ -1367,31 +1340,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             MotionEvent.ACTION_POINTER_UP -> {
                 if (event.pointerCount == 2) {
-                    val duration = System.currentTimeMillis() - twoFingerTapStartTime
-                    val panDistance = kotlin.math.sqrt(
-                        (twoFingerLastX - twoFingerStartX) * (twoFingerLastX - twoFingerStartX) +
-                        (twoFingerLastY - twoFingerStartY) * (twoFingerLastY - twoFingerStartY)
-                    )
-
-                    sendLog("PaintCanvas", "╔════════════════════════════════════════╗")
-                    sendLog("PaintCanvas", "║ 👆 ACTION_POINTER_UP (손가락 뗌)        ║")
-                    sendLog("PaintCanvas", "╠════════════════════════════════════════╣")
-                    sendLog("PaintCanvas", "║ duration=${duration}ms")
-                    sendLog("PaintCanvas", "║ panDistance=${"%.1f".format(panDistance)}px")
-                    sendLog("PaintCanvas", "║ isPanningOnly=$isPanningOnly")
-                    sendLog("PaintCanvas", "║ currentScale=$scaleFactor")
-                    sendLog("PaintCanvas", "║ touchMode=$touchMode")
-                    sendLog("PaintCanvas", "║ ⚠️ stepZoom은 onScaleEnd에서 처리!")
-                    sendLog("PaintCanvas", "╚════════════════════════════════════════╝")
-
-                    // 🎯 두 손가락 탭은 onScaleEnd에서 처리 (중복 호출 방지)
-                    // ScaleGestureDetector.onScaleEnd에서 탭 감지 및 stepZoom 호출
-
+                    // ⚡ 최적화: 상세 로그 제거 (onScaleEnd에서 처리)
                     touchMode = TouchMode.NONE
                     preventPaintOnce = true
                     allowPainting = false
-                    lastMultiTouchEndTime = System.currentTimeMillis()  // 🐛 두 손가락 제스처 종료 시간 기록
-                    isPanningOnly = false  // 🐛 팬 모드 리셋
+                    lastMultiTouchEndTime = System.currentTimeMillis()
+                    isPanningOnly = false
                     initialSpanForPanCheck = 0f
                 }
             }
