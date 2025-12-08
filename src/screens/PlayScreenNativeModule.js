@@ -30,7 +30,7 @@ const COLOR_BUTTON_SIZE = Math.floor((PALETTE_AVAILABLE_WIDTH - (BUTTONS_PER_ROW
 const loadingImage = require('../../assets/loading-image.png');
 
 // ⚡ 최적화: 색상 버튼 컴포넌트 분리 (memo로 불필요한 리렌더링 방지)
-const ColorButton = memo(({ color, isSelected, onSelect, luminance }) => {
+const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted }) => {
   const textColor = luminance > 128 ? '#000' : '#FFF';
   const shadowColor = luminance > 128 ? '#FFF' : '#000';
 
@@ -39,19 +39,31 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance }) => {
       style={[
         colorButtonStyles.button,
         { backgroundColor: color.hex },
-        isSelected && colorButtonStyles.selected
+        isSelected && colorButtonStyles.selected,
+        isCompleted && colorButtonStyles.completed
       ]}
       onPress={onSelect}
       activeOpacity={0.7}
     >
-      <Text style={[colorButtonStyles.id, { color: textColor, textShadowColor: shadowColor }]}>
-        {color.id}
-      </Text>
+      {/* 완료된 색상은 라벨 숨김, 원색만 표시 */}
+      {!isCompleted && (
+        <Text style={[colorButtonStyles.id, { color: textColor, textShadowColor: shadowColor }]}>
+          {color.id}
+        </Text>
+      )}
+      {/* 완료 표시 (체크마크) */}
+      {isCompleted && (
+        <Text style={[colorButtonStyles.checkmark, { color: textColor, textShadowColor: shadowColor }]}>
+          ✓
+        </Text>
+      )}
     </TouchableOpacity>
   );
 }, (prev, next) => {
-  // isSelected 변경 시에만 리렌더링
-  return prev.isSelected === next.isSelected && prev.color.id === next.color.id;
+  // isSelected, isCompleted 변경 시에만 리렌더링
+  return prev.isSelected === next.isSelected &&
+         prev.color.id === next.color.id &&
+         prev.isCompleted === next.isCompleted;
 });
 
 const colorButtonStyles = StyleSheet.create({
@@ -77,8 +89,19 @@ const colorButtonStyles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 8,
   },
+  completed: {
+    opacity: 0.7,
+    borderColor: '#4CD964',
+    borderWidth: 2,
+  },
   id: {
     fontSize: 12,
+    fontWeight: 'bold',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 1,
+  },
+  checkmark: {
+    fontSize: 16,
     fontWeight: 'bold',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 1,
@@ -261,6 +284,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // ⚡ 셀 데이터 비동기 생성 (UI 블로킹 방지)
   const [cells, setCells] = useState([]);
   const [isCellsReady, setIsCellsReady] = useState(false);
+  // 🎨 각 색상별 전체 셀 개수 (라벨 → 개수)
+  const [colorCellCounts, setColorCellCounts] = useState({});
 
   useEffect(() => {
     if (actualColors.length === 0) return;
@@ -277,6 +302,9 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       const actualColorsLength = actualColors.length;
       const hasGridColors = gridColors && gridColors.length > 0;
 
+      // 🎨 색상별 셀 개수 카운트
+      const cellCounts = {};
+
       // ⚡ 최적화: colorMap 제거, 직접 접근
       // ⚡ 루프 최적화: 조건문 최소화
       for (let idx = 0; idx < totalCells; idx++) {
@@ -291,19 +319,25 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         }
 
         const color = actualColors[colorIndex];
+        const label = color?.id || 'A';
         cellList[idx] = {
           row,
           col,
           targetColorHex: color?.hex || '#FFFFFF',
-          label: color?.id || 'A',
+          label,
         };
+
+        // 색상별 셀 개수 증가
+        cellCounts[label] = (cellCounts[label] || 0) + 1;
       }
 
       if (__DEV__) {
         console.log('[셀생성] 완료:', totalCells, '개 셀,', Date.now() - startTime, 'ms');
+        console.log('[색상별 셀 개수]:', Object.keys(cellCounts).length, '색상');
       }
 
       setCells(cellList);
+      setColorCellCounts(cellCounts);
       setIsCellsReady(true);
     });
 
@@ -744,6 +778,45 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     return handlers;
   }, [actualColors]);
 
+  // 🎨 완료된 색상 계산 (정답으로 칠해진 셀만 카운트)
+  const completedColors = useMemo(() => {
+    if (cells.length === 0 || Object.keys(colorCellCounts).length === 0) {
+      return new Set();
+    }
+
+    // 정답으로 칠해진 셀만 카운트 (wrongCells 제외)
+    const correctFilledCells = new Set(
+      [...filledCells].filter(cellKey => !wrongCells.has(cellKey))
+    );
+
+    // 각 색상별 정답 칠해진 개수 계산
+    const filledCounts = {};
+    for (const cellKey of correctFilledCells) {
+      const [row, col] = cellKey.split('-').map(Number);
+      const idx = row * gridSize + col;
+      const cell = cells[idx];
+      if (cell) {
+        const label = cell.label;
+        filledCounts[label] = (filledCounts[label] || 0) + 1;
+      }
+    }
+
+    // 완료된 색상 판별 (전체 셀 개수 == 칠해진 셀 개수)
+    const completed = new Set();
+    for (const [label, totalCount] of Object.entries(colorCellCounts)) {
+      const filledCount = filledCounts[label] || 0;
+      if (filledCount >= totalCount) {
+        completed.add(label);
+      }
+    }
+
+    if (__DEV__ && completed.size > 0) {
+      console.log('[완료된 색상]:', [...completed].join(', '));
+    }
+
+    return completed;
+  }, [cells, colorCellCounts, filledCells, wrongCells, gridSize]);
+
   // 색상 팔레트 렌더링 (⚡ 최적화: memo된 ColorButton 사용)
   const renderPalette = useCallback(() => {
     if (isTablet) {
@@ -759,6 +832,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               isSelected={selectedColor?.id === color.id}
               onSelect={colorSelectHandlers.get(color.id)}
               luminance={colorLuminanceMap.get(color.id)}
+              isCompleted={completedColors.has(color.id)}
             />
           ))}
         </ScrollView>
@@ -800,13 +874,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                 isSelected={selectedColor?.id === color.id}
                 onSelect={colorSelectHandlers.get(color.id)}
                 luminance={colorLuminanceMap.get(color.id)}
+                isCompleted={completedColors.has(color.id)}
               />
             ))}
           </View>
         </View>
       </View>
     );
-  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size, undoPulseAnim]);
+  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size, undoPulseAnim, completedColors]);
 
   if (isTablet) {
     // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
