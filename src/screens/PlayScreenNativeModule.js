@@ -778,44 +778,58 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     return handlers;
   }, [actualColors]);
 
-  // 🎨 완료된 색상 계산 (정답으로 칠해진 셀만 카운트)
-  const completedColors = useMemo(() => {
+  // 🎨 완료된 색상 계산 (디바운스로 성능 최적화)
+  // ⚡ 색칠 시마다 즉시 계산하면 딜레이 발생 → 500ms 디바운스
+  const [completedColors, setCompletedColors] = useState(new Set());
+  const completedColorsTimerRef = useRef(null);
+
+  useEffect(() => {
     if (cells.length === 0 || Object.keys(colorCellCounts).length === 0) {
-      return new Set();
+      return;
     }
 
-    // 정답으로 칠해진 셀만 카운트 (wrongCells 제외)
-    const correctFilledCells = new Set(
-      [...filledCells].filter(cellKey => !wrongCells.has(cellKey))
-    );
+    // 기존 타이머 취소
+    if (completedColorsTimerRef.current) {
+      clearTimeout(completedColorsTimerRef.current);
+    }
 
-    // 각 색상별 정답 칠해진 개수 계산
-    const filledCounts = {};
-    for (const cellKey of correctFilledCells) {
-      const [row, col] = cellKey.split('-').map(Number);
-      const idx = row * gridSize + col;
-      const cell = cells[idx];
-      if (cell) {
-        const label = cell.label;
-        filledCounts[label] = (filledCounts[label] || 0) + 1;
+    // 500ms 디바운스로 완료 색상 계산 (색칠 성능에 영향 없음)
+    completedColorsTimerRef.current = setTimeout(() => {
+      // 정답으로 칠해진 셀만 카운트 (wrongCells 제외)
+      const correctFilledCells = new Set(
+        [...filledCells].filter(cellKey => !wrongCells.has(cellKey))
+      );
+
+      // 각 색상별 정답 칠해진 개수 계산
+      const filledCounts = {};
+      for (const cellKey of correctFilledCells) {
+        const [row, col] = cellKey.split('-').map(Number);
+        const idx = row * gridSize + col;
+        const cell = cells[idx];
+        if (cell) {
+          const label = cell.label;
+          filledCounts[label] = (filledCounts[label] || 0) + 1;
+        }
       }
-    }
 
-    // 완료된 색상 판별 (전체 셀 개수 == 칠해진 셀 개수)
-    const completed = new Set();
-    for (const [label, totalCount] of Object.entries(colorCellCounts)) {
-      const filledCount = filledCounts[label] || 0;
-      if (filledCount >= totalCount) {
-        completed.add(label);
+      // 완료된 색상 판별 (전체 셀 개수 == 칠해진 셀 개수)
+      const completed = new Set();
+      for (const [label, totalCount] of Object.entries(colorCellCounts)) {
+        const filledCount = filledCounts[label] || 0;
+        if (filledCount >= totalCount) {
+          completed.add(label);
+        }
       }
-    }
 
-    if (__DEV__ && completed.size > 0) {
-      console.log('[완료된 색상]:', [...completed].join(', '));
-    }
+      setCompletedColors(completed);
+    }, 500);
 
-    return completed;
-  }, [cells, colorCellCounts, filledCells, wrongCells, gridSize]);
+    return () => {
+      if (completedColorsTimerRef.current) {
+        clearTimeout(completedColorsTimerRef.current);
+      }
+    };
+  }, [cells, colorCellCounts, filledCells.size, wrongCells.size, gridSize]);
 
   // 색상 팔레트 렌더링 (⚡ 최적화: memo된 ColorButton 사용)
   const renderPalette = useCallback(() => {
