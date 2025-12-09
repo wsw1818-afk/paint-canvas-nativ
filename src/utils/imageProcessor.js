@@ -799,7 +799,7 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 
 /**
  * 픽셀 데이터에 색칠하기 최적화 적용
- * ★★★ 사진 원본 색상 최대한 보존 - 자연스러운 색감 유지
+ * ★★★ 채도 강화로 더 진하고 선명한 색상 생성
  * @param {Uint8Array} pixelData - RGBA 픽셀 데이터
  * @param {number} width - 이미지 너비
  * @param {number} height - 이미지 높이
@@ -808,15 +808,60 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 function optimizePixelsForColoring(pixelData, width, height) {
   const optimized = new Uint8Array(pixelData.length);
 
-  // ⚡ 원본 색상 100% 보존 - 어떠한 조정도 하지 않음
+  // 🎨 채도 강화 설정 (더 진하고 어둡게)
+  const SATURATION_BOOST = 2.0;  // 채도 100% 증가 (매우 진하게)
+  const VALUE_BOOST = 0.90;       // 명도 10% 감소 (더 어둡게)
+
   for (let i = 0; i < pixelData.length; i += 4) {
-    optimized[i] = pixelData[i];       // R
-    optimized[i + 1] = pixelData[i + 1]; // G
-    optimized[i + 2] = pixelData[i + 2]; // B
-    optimized[i + 3] = pixelData[i + 3]; // A
+    const r = pixelData[i];
+    const g = pixelData[i + 1];
+    const b = pixelData[i + 2];
+
+    // RGB → HSV 변환
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+
+    let h = 0, s = 0, v = max / 255;
+
+    if (delta !== 0) {
+      s = delta / max;
+
+      if (max === r) {
+        h = ((g - b) / delta) % 6;
+      } else if (max === g) {
+        h = (b - r) / delta + 2;
+      } else {
+        h = (r - g) / delta + 4;
+      }
+      h = h * 60;
+      if (h < 0) h += 360;
+    }
+
+    // 🎨 채도와 명도 강화 (최대 1.0으로 제한)
+    s = Math.min(1.0, s * SATURATION_BOOST);
+    v = Math.min(1.0, v * VALUE_BOOST);
+
+    // HSV → RGB 변환
+    const c = v * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = v - c;
+
+    let rr, gg, bb;
+    if (h < 60) { rr = c; gg = x; bb = 0; }
+    else if (h < 120) { rr = x; gg = c; bb = 0; }
+    else if (h < 180) { rr = 0; gg = c; bb = x; }
+    else if (h < 240) { rr = 0; gg = x; bb = c; }
+    else if (h < 300) { rr = x; gg = 0; bb = c; }
+    else { rr = c; gg = 0; bb = x; }
+
+    optimized[i] = Math.round((rr + m) * 255);
+    optimized[i + 1] = Math.round((gg + m) * 255);
+    optimized[i + 2] = Math.round((bb + m) * 255);
+    optimized[i + 3] = pixelData[i + 3]; // A 유지
   }
 
-  console.log('✨ 픽셀 최적화 완료 (원본 색상 100% 보존)');
+  console.log(`✨ 픽셀 최적화 완료 (채도 ${((SATURATION_BOOST - 1) * 100).toFixed(0)}% 강화)`);
   return optimized;
 }
 

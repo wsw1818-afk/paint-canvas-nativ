@@ -759,6 +759,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var preventPaintOnce = false  // Prevent painting after multi-touch ends
     private var allowPainting = false  // Only allow painting after first MOVE event (prevents paint during two-finger setup)
     private var lastMultiTouchEndTime = 0L  // 🐛 두 손가락 제스처 종료 시간 (색칠 차단용)
+    private var wasMultiTouchInSession = false  // 🐛 이번 터치 세션에서 두 손가락 사용 여부
 
     // 완성 모드: "ORIGINAL" = 원본 이미지 표시, "WEAVE" = 위빙 텍스처 유지
     private var completionMode = "ORIGINAL"
@@ -785,6 +786,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var pinchStartSpan = 0f   // 핀치 시작 시 손가락 거리
     private var isPanningOnly = false // 🐛 팬 모드 시작 시 줌 차단
     private var initialSpanForPanCheck = 0f  // 🐛 팬/줌 결정용 초기 간격
+    private var isSingleFingerPanning = false // 🐛 한 손가락 팬 모드 (드래그 중 색칠 차단)
     private var scaleGestureStartTime = 0L   // 🎯 두 손가락 탭 감지용 시작 시간
     private var lastStepZoomTime = 0L  // 🐛 stepZoom 중복 호출 방지용 쿨다운
     private val STEP_ZOOM_COOLDOWN = 300L  // 300ms 쿨다운
@@ -1217,12 +1219,15 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 allowPainting = false
                 touchDownTime = System.currentTimeMillis()
                 hasMoved = false  // ⚡ 이동 여부 리셋
+                wasMultiTouchInSession = false  // 🐛 새 터치 세션 시작
+                isSingleFingerPanning = false  // 🐛 한 손가락 팬 모드 리셋
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 // Second finger down - block painting
                 preventPaintOnce = true
                 allowPainting = false
+                wasMultiTouchInSession = true  // 🐛 두 손가락 사용됨 - 이 세션 동안 색칠 차단
 
                 if (event.pointerCount == 2) {
                     val centroidX = (event.getX(0) + event.getX(1)) / 2f
@@ -1247,10 +1252,23 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_MOVE -> {
                 when (event.pointerCount) {
                     1 -> {
+                        // 🐛 두 손가락이 한 번이라도 사용되었으면 이 세션 동안 색칠 완전 차단
+                        if (wasMultiTouchInSession) {
+                            // 두 손가락 팬/줌 후 한 손가락만 남아도 색칠 안 함 (팬만 허용)
+                            val dx = event.x - lastTouchX
+                            val dy = event.y - lastTouchY
+                            lastTouchX = event.x
+                            lastTouchY = event.y
+                            return true
+                        }
+
                         // 🐛 줌 중이거나 핀치 직후면 색칠 차단
-                        // 🐛 추가: 두 손가락 제스처 종료 후 150ms 동안 색칠 차단
+                        // 🐛 추가: 두 손가락 제스처 종료 후 600ms 동안 색칠 차단 (이동 후 색칠 방지)
                         val timeSinceMultiTouch = System.currentTimeMillis() - lastMultiTouchEndTime
-                        val isMultiTouchCooldown = timeSinceMultiTouch < 150L
+                        val isMultiTouchCooldown = timeSinceMultiTouch < 600L
+
+                        // 🎨 연속 드래그 색칠 활성화: isSingleFingerPanning 로직 제거
+                        // 한 손가락 드래그는 색칠로 사용 (두 손가락만 팬)
 
                         if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown) {
                             val timeSinceDown = System.currentTimeMillis() - touchDownTime
@@ -1258,9 +1276,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val dy = event.y - touchStartY
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                            // ⚡ 두 손가락 터치 방지: 25ms 대기 또는 8px 이동 시 색칠 시작
-                            // 두 손가락은 보통 40ms 내 두 번째 손가락 도착 (더 빠른 응답)
-                            if (timeSinceDown >= 25L || distance > 8f) {
+                            // ⚡ 두 손가락 터치 방지: 30ms 대기 또는 8px 이동 시 색칠 시작
+                            // 두 손가락은 보통 40ms 내 두 번째 손가락 도착
+                            if (timeSinceDown >= 30L || distance > 8f) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
                                 hasMoved = true
@@ -1312,13 +1330,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             MotionEvent.ACTION_UP -> {
                 val timeSinceDown = System.currentTimeMillis() - touchDownTime
-                // 🐛 두 손가락 제스처 종료 후 150ms 동안 색칠 차단
+                // 🐛 두 손가락 제스처 종료 후 600ms 동안 색칠 차단 (이동 후 색칠 방지)
                 val timeSinceMultiTouch = System.currentTimeMillis() - lastMultiTouchEndTime
-                val isMultiTouchCooldown = timeSinceMultiTouch < 150L
+                val isMultiTouchCooldown = timeSinceMultiTouch < 600L
 
                 // ⚡ 빠른 탭: 300ms 이내, 이동 없음, 두 손가락 아님, 줌 아님 → 색칠
                 // 🐛 줌 중이거나 핀치 직후면 색칠 차단
-                if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && timeSinceDown < 300L && !hasMoved) {
+                // 🐛 두 손가락이 사용된 세션이면 색칠 차단
+                if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && !wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
                     handlePainting(event.x, event.y)
                 }
 
@@ -1328,6 +1347,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 allowPainting = false
                 hasMoved = false
                 isPanningOnly = false  // 🐛 팬 모드 리셋
+                isSingleFingerPanning = false  // 🐛 한 손가락 팬 모드 리셋
                 initialSpanForPanCheck = 0f
 
                 lastPaintedCellIndex = -1
@@ -1355,6 +1375,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 activePointerId = -1
                 hasMoved = false
                 isPanningOnly = false  // 🐛 팬 모드 리셋
+                isSingleFingerPanning = false  // 🐛 한 손가락 팬 모드 리셋
                 initialSpanForPanCheck = 0f
             }
         }
@@ -2186,9 +2207,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
         }
     }
-
-    // ⚡ 재사용 가능한 HSV 배열 (매번 생성하지 않음)
-    private val reusableHsv = FloatArray(3)
 
     private fun applyTextureToOriginalImage(original: Bitmap, pattern: Bitmap): Bitmap {
         // ⚠️ 안전 체크: recycled 비트맵 접근 방지
