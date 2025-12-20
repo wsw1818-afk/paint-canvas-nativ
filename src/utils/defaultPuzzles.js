@@ -10,6 +10,12 @@ import { processImage } from './imageProcessor';
 
 const DEFAULT_PUZZLES_KEY = '@defaultPuzzlesCreated';
 
+// 정적 import (동적 require는 Release 빌드에서 에러)
+const ASSET_MODULES = {
+  'basic1.png': require('../../assets/basic1.png'),
+  'basic2.png': require('../../assets/basic2.png'),
+};
+
 const DEFAULT_PUZZLES = [
   {
     assetName: 'basic1.png',
@@ -44,8 +50,13 @@ export const createDefaultPuzzles = async () => {
 
     for (const puzzle of DEFAULT_PUZZLES) {
       try {
-        // 1. Asset에서 이미지 로드
-        const asset = Asset.fromModule(require(`../../assets/${puzzle.assetName}`));
+        // 1. Asset에서 이미지 로드 (정적 참조)
+        const assetModule = ASSET_MODULES[puzzle.assetName];
+        if (!assetModule) {
+          console.error(`[기본 퍼즐] Asset을 찾을 수 없음: ${puzzle.assetName}`);
+          continue;
+        }
+        const asset = Asset.fromModule(assetModule);
         await asset.downloadAsync();
 
         // 2. 파일 시스템으로 복사 (앱 재시작 후에도 유지)
