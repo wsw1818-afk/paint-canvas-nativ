@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { migratePuzzles } from '../utils/puzzleStorage';
+import { createDefaultPuzzles } from '../utils/defaultPuzzles';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { t, addLanguageChangeListener } from '../locales';
 
@@ -17,7 +18,7 @@ export default function HomeScreen({ navigation }) {
     return unsubscribe;
   }, []);
 
-  // 앱 시작 시 기존 퍼즐 마이그레이션 (백그라운드 실행)
+  // 앱 시작 시 기존 퍼즐 마이그레이션 + 기본 퍼즐 생성 (백그라운드 실행)
   useEffect(() => {
     const runMigration = async () => {
       try {
@@ -29,7 +30,20 @@ export default function HomeScreen({ navigation }) {
         console.warn('마이그레이션 오류:', error);
       }
     };
+
+    const createDefaults = async () => {
+      try {
+        const result = await createDefaultPuzzles();
+        if (result.created && result.count > 0) {
+          console.log(`🎨 ${result.count}개 기본 퍼즐 생성 완료`);
+        }
+      } catch (error) {
+        console.warn('기본 퍼즐 생성 오류:', error);
+      }
+    };
+
     runMigration();
+    createDefaults();
   }, []);
 
   return (
