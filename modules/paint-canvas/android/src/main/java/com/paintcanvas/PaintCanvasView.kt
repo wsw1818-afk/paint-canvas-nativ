@@ -46,16 +46,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     /**
      * 🚀 첫 번째 성공적인 렌더링 완료 시 JS에 알림
      * onDraw에서 실제 캔버스가 그려진 후 호출됨
-     * 🐛 잠재적 문제 해결: 진행 상황 로딩 완료 후에만 알림 (비동기 로딩 완료 대기)
+     * ⚡ 성능 개선: 이미지 로딩 완료 시 바로 알림 (진행 상황 복원은 백그라운드에서 계속)
+     * → 로딩 오버레이가 빨리 사라져서 터치 응답이 빠름
      */
     private fun notifyCanvasReady() {
-        // 진행 상황 로딩이 완료되지 않았으면 대기
-        if (!isProgressLoaded) return
+        // ⚡ 이미지 로딩 완료되면 바로 알림 (진행 상황 복원 대기 안 함)
+        // 진행 상황 복원은 백그라운드에서 계속되고, 화면에 자연스럽게 반영됨
+        if (!isImageLoaded) return
 
         if (!hasNotifiedReady) {
             hasNotifiedReady = true
             sendLog("PaintCanvas", "╔════════════════════════════════════════╗")
-            sendLog("PaintCanvas", "║ 🚀 Canvas Ready! 첫 렌더링 완료         ║")
+            sendLog("PaintCanvas", "║ 🚀 Canvas Ready! 이미지 로딩 완료       ║")
             sendLog("PaintCanvas", "║ filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
             sendLog("PaintCanvas", "║ maxZoom=$maxZoom, gridSize=$gridSize")
             sendLog("PaintCanvas", "╚════════════════════════════════════════╝")
@@ -85,6 +87,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var selectedColorHex: String = "#FF0000"
     private var selectedLabel: String = "A"
     private var imageUri: String? = null
+    private var textureUri: String? = null  // 🎨 텍스처 이미지 URI
+    private var textureBitmap: Bitmap? = null  // 🎨 텍스처 비트맵
+    private var currentTextureId: String? = null  // 🎨 현재 적용된 텍스처 ID (shader 재생성 판단용)
     private var isEraseMode: Boolean = false  // X 제거 모드
 
     // ⚡ 대형 그리드 최적화 모드 (GPU 부하 방지)
@@ -250,8 +255,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val cellIndex = row * localGridSize + col
             labelMapByIndex[cellIndex] = label
 
-            // ⚡ 색상 파싱은 필요할 때만 (지연 로딩)
-            // parsedColorMap은 onDraw나 터치 시 lazy하게 채움
+            // 🎨 팔레트 색상을 parsedColorMap에 저장 (이미지 픽셀 대신 팔레트 사용)
+            try {
+                parsedColorMap[cellIndex] = android.graphics.Color.parseColor(targetColorHex)
+            } catch (e: Exception) {
+                parsedColorMap[cellIndex] = android.graphics.Color.WHITE
+            }
         }
 
         cells = newCells
@@ -335,11 +344,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * puzzleId 기반의 고유 ID를 사용하여 일관된 저장/복원 보장
      */
     fun setGameId(id: String) {
-        if (currentGameId == id) return  // ⚡ 변경 없으면 스킵
+        if (currentGameId == id && !shouldClearProgress) return  // ⚡ 변경 없으면 스킵 (단, clearProgress 시 재처리)
 
         val oldId = currentGameId
         currentGameId = id
-        android.util.Log.d("PaintCanvas", "🔄 gameId 설정 (from JS): $id (이전: $oldId)")
+        android.util.Log.d("PaintCanvas", "🔄 gameId 설정 (from JS): $id (이전: $oldId, shouldClear: $shouldClearProgress)")
+
+        // 🗑️ clearProgress 플래그가 설정되어 있으면 SharedPreferences 삭제
+        if (shouldClearProgress) {
+            prefs.edit().remove(id).commit()
+            android.util.Log.d("PaintCanvas", "🗑️ setGameId에서 SharedPreferences 삭제: $id")
+            // 플래그는 유지 (loadProgressFromPrefs에서도 체크)
+        }
 
         // gameId가 설정되면 저장된 진행 상황 복원 시도
         // 단, 아직 사용자가 칠하지 않은 상태에서만 복원
@@ -440,50 +456,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val loadTime = System.currentTimeMillis() - startTime
                 android.util.Log.d("PaintCanvas", "⚡ 이미지 로드: ${loadTime}ms")
 
-                // 2. parsedColorMap 업데이트 (이미지와 병렬로 처리 가능)
-                // ⚡ 최적화: getPixels() 배치 처리로 10배+ 속도 향상
-                val localGridSize = gridSize
-                val tempColorMap = HashMap<Int, Int>()
+                // 🎨 parsedColorMap은 setCells에서 팔레트 색상으로 이미 채워짐
+                // 이미지 픽셀 색상 대신 팔레트 색상을 사용하여 일관성 유지
 
-                if (loadedBitmap != null && !loadedBitmap.isRecycled && localGridSize > 0) {
-                    val colorMapStart = System.currentTimeMillis()
-                    val bw = loadedBitmap.width
-                    val bh = loadedBitmap.height
-
-                    // ⚡ 전체 비트맵 픽셀을 한 번에 읽기 (getPixel 루프 대비 10배+ 빠름)
-                    val allPixels = IntArray(bw * bh)
-                    loadedBitmap.getPixels(allPixels, 0, bw, 0, 0, bw, bh)
-
-                    // 셀 중심점 색상 추출 (배열 인덱싱만 사용)
-                    val cellWidth = bw.toFloat() / localGridSize
-                    val cellHeight = bh.toFloat() / localGridSize
-                    val halfCellWidth = cellWidth / 2f
-                    val halfCellHeight = cellHeight / 2f
-
-                    for (row in 0 until localGridSize) {
-                        val srcY = (row * cellHeight + halfCellHeight).toInt().coerceIn(0, bh - 1)
-                        val rowOffset = row * localGridSize
-                        val pixelRowOffset = srcY * bw
-
-                        for (col in 0 until localGridSize) {
-                            val srcX = (col * cellWidth + halfCellWidth).toInt().coerceIn(0, bw - 1)
-                            val cellIndex = rowOffset + col
-                            tempColorMap[cellIndex] = allPixels[pixelRowOffset + srcX]
-                        }
-                    }
-
-                    val colorMapTime = System.currentTimeMillis() - colorMapStart
-                    android.util.Log.d("PaintCanvas", "⚡ parsedColorMap: ${colorMapTime}ms")
-                }
-
-                // 3. 메인 스레드에서 UI 업데이트 (텍스처는 나중에 적용)
+                // 메인 스레드에서 UI 업데이트 (텍스처는 나중에 적용)
                 withContext(Dispatchers.Main) {
                     try {
                         originalBitmap = loadedBitmap
                         backgroundBitmap = loadedBitmap  // ⚡ 먼저 원본으로 표시
-
-                        // ⚡ 미리 계산된 colorMap 적용 (단순 대입)
-                        parsedColorMap.putAll(tempColorMap)
 
                         isImageLoading = false
                         isImageLoaded = true  // 🚀 이미지 로딩 완료 플래그
@@ -508,11 +488,67 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // 🎨 사용자 선택 텍스처 URI 설정
+    fun setTextureUri(uri: String?) {
+        if (uri == null || uri.isEmpty() || uri == "null") {
+            // 텍스처 비활성화 (기본 텍스처로 복원)
+            if (textureUri != null) {
+                textureUri = null
+                textureBitmap?.recycle()
+                textureBitmap = null
+                baseTextureShader = null  // 🎨 shader 초기화
+                currentTextureId = null
+                squarePatternBitmap?.recycle()
+                squarePatternBitmap = null
+                android.util.Log.d("PaintCanvas", "🎨 텍스처 해제 → 기본 텍스처로 복원")
+
+                // 이미지가 로드된 상태라면 텍스처 다시 적용
+                originalBitmap?.let { applyTextureInBackground(it) }
+                invalidate()  // 즉시 화면 갱신
+            }
+            return
+        }
+
+        if (textureUri == uri && textureBitmap != null && !textureBitmap!!.isRecycled) {
+            android.util.Log.d("PaintCanvas", "🎨 동일한 텍스처, 스킵")
+            return
+        }
+
+        textureUri = uri
+        android.util.Log.d("PaintCanvas", "🎨 텍스처 URI 설정: $uri")
+
+        // 백그라운드에서 텍스처 비트맵 로드
+        imageLoadScope.launch {
+            try {
+                val loaded = loadBitmap(uri)
+                withContext(Dispatchers.Main) {
+                    textureBitmap?.recycle()
+                    textureBitmap = loaded
+                    baseTextureShader = null  // 🎨 shader 초기화 (새 텍스처로 재생성)
+                    squarePatternBitmap?.recycle()
+                    squarePatternBitmap = null
+                    android.util.Log.d("PaintCanvas", "🎨 텍스처 비트맵 로드 완료: ${loaded?.width}x${loaded?.height}")
+
+                    // 이미지가 로드된 상태라면 새 텍스처로 다시 적용
+                    originalBitmap?.let { applyTextureInBackground(it) }
+                    invalidate()  // 즉시 화면 갱신 (색칠된 셀에 새 텍스처 적용)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PaintCanvas", "❌ 텍스처 로드 실패: ${e.message}")
+            }
+        }
+    }
+
     // ⚡ 텍스처 지연 적용 (로딩 완료 후 백그라운드에서)
     private fun applyTextureInBackground(bitmap: Bitmap?) {
         if (bitmap == null || bitmap.isRecycled) return
-        val pattern = filledCellPatternBitmap ?: return
-        if (pattern.isRecycled) return
+
+        // 🎨 사용자 선택 텍스처가 있으면 우선 사용, 없으면 기본 텍스처
+        val pattern = textureBitmap ?: filledCellPatternBitmap
+        if (pattern == null || pattern.isRecycled) {
+            android.util.Log.d("PaintCanvas", "⚡ 텍스처 없음, 원본 이미지 유지")
+            return
+        }
 
         imageLoadScope.launch {
             try {
@@ -521,6 +557,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     if (!textured.isRecycled) {
                         backgroundBitmap = textured
                         invalidate()
+                        android.util.Log.d("PaintCanvas", "🎨 텍스처 적용 완료 (사용자 선택: ${textureBitmap != null})")
                     }
                 }
             } catch (e: Exception) {
@@ -666,8 +703,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // ⚡ 줌 기반 텍스처 활성화 임계값
         // 음영: 항상 표시 (줌 레벨 무관)
-        // 텍스처: 40% 줌 이상에서만 표시 (높은 줌에서 디테일 표시)
-        private const val TEXTURE_VISIBLE_ZOOM_THRESHOLD = 0.4f  // 텍스처는 40%부터
+        // 텍스처: 사용자 선택 텍스처가 있으면 항상 표시, 기본 텍스처는 20% 줌 이상에서 표시
+        private const val TEXTURE_VISIBLE_ZOOM_THRESHOLD = 0.2f  // 텍스처는 20%부터 (낮춤)
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -760,6 +797,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var allowPainting = false  // Only allow painting after first MOVE event (prevents paint during two-finger setup)
     private var lastMultiTouchEndTime = 0L  // 🐛 두 손가락 제스처 종료 시간 (색칠 차단용)
     private var wasMultiTouchInSession = false  // 🐛 이번 터치 세션에서 두 손가락 사용 여부
+    private var pendingViewportRestore: Triple<Float, Float, Float>? = null  // 🔍 복원할 뷰포트 (scale, tx, ty)
 
     // 완성 모드: "ORIGINAL" = 원본 이미지 표시, "WEAVE" = 위빙 텍스처 유지
     private var completionMode = "ORIGINAL"
@@ -1001,12 +1039,24 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // 첫 초기화이거나 크기가 실제로 변경된 경우에만 줌 리셋
         if (oldw == 0 && oldh == 0) {
-            // 첫 초기화 - 줌 리셋
-            scaleFactor = 1f
-            currentZoomIndex = 0
-            translateX = (canvasViewWidth - canvasWidth) / 2f
-            translateY = (canvasViewHeight - canvasWidth) / 2f
-            android.util.Log.d("PaintCanvas", "📐 First init: reset zoom to 1x")
+            // 🔍 저장된 뷰포트 위치가 있으면 복원, 없으면 기본값
+            val viewport = pendingViewportRestore
+            if (viewport != null) {
+                scaleFactor = viewport.first
+                translateX = viewport.second
+                translateY = viewport.third
+                syncZoomIndex()  // zoomIndex 동기화
+                applyBoundaries()  // 경계 보정
+                pendingViewportRestore = null
+                android.util.Log.d("PaintCanvas", "🔍 뷰포트 복원 완료: scale=$scaleFactor, tx=$translateX, ty=$translateY")
+            } else {
+                // 첫 초기화 - 줌 리셋
+                scaleFactor = 1f
+                currentZoomIndex = 0
+                translateX = (canvasViewWidth - canvasWidth) / 2f
+                translateY = (canvasViewHeight - canvasWidth) / 2f
+                android.util.Log.d("PaintCanvas", "📐 First init: reset zoom to 1x")
+            }
         } else if (sizeActuallyChanged) {
             // 크기 변경됨 - 줌 유지하되 경계만 재조정
             applyBoundaries()
@@ -1513,9 +1563,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     paintedColorMap.remove(cellKey)
                     recentlyRemovedWrongCells.add(cellKey)
                     // ⚡ X 제거 전용 큐 사용 (일반 색칠 큐와 충돌 방지)
+                    // 🔄 저장은 flushEraseEvents에서 배치로 처리 (매 셀마다 호출 제거)
                     queueEraseEvent(row, col, true)
-                    // 🔄 자동 저장
-                    saveProgressToPrefs()
                 }
                 return
             }
@@ -1547,6 +1596,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // ✅ 사용자가 색칠 시작함 표시 (이후 JS 업데이트 무시)
         hasUserPainted = true
+
+        // 🔍 마지막 색칠 위치 저장 (앱 재시작 시 자동 이동용)
+        lastPaintedCellIndex = cellIndex
 
         // 🔄 String 키 생성 (저장용)
         val cellKey = "$row-$col"
@@ -1665,6 +1717,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             for ((r, c, correct) in eventsCopy) {
                 sendCellPaintedEvent(r, c, correct)
             }
+
+            // 🔄 배치 처리 완료 후 한 번만 저장
+            saveProgressToPrefs()
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ flushEraseEvents 오류: ${e.message}")
         }
@@ -1790,6 +1845,46 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     private fun loadBitmap(uriString: String): Bitmap? {
         return try {
+            android.util.Log.d("PaintCanvas", "🖼️ loadBitmap 시작: $uriString")
+
+            // HTTP/HTTPS URL 처리 (Metro bundler에서 제공하는 asset 등)
+            if (uriString.startsWith("http://") || uriString.startsWith("https://")) {
+                android.util.Log.d("PaintCanvas", "🌐 HTTP URL 감지, URL에서 직접 로드")
+                return loadBitmapFromUrl(uriString)
+            }
+
+            // 🎨 Release 빌드: drawable:// 또는 asset:// URI 처리
+            // React Native Release 빌드에서 Image.resolveAssetSource()는 drawable:// 형식 반환
+            if (uriString.startsWith("drawable://")) {
+                android.util.Log.d("PaintCanvas", "🎨 drawable:// URI 감지, 리소스에서 로드")
+                return loadBitmapFromDrawable(uriString)
+            }
+
+            // 🎨 Release 빌드: file:///android_asset/ 형식 처리
+            if (uriString.startsWith("file:///android_asset/")) {
+                android.util.Log.d("PaintCanvas", "🎨 android_asset URI 감지, assets에서 로드")
+                val assetPath = uriString.removePrefix("file:///android_asset/")
+                return context.assets.open(assetPath).use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }
+            }
+
+            // 🎨 Release 빌드: asset:// 형식 처리
+            if (uriString.startsWith("asset://")) {
+                android.util.Log.d("PaintCanvas", "🎨 asset:// URI 감지, assets에서 로드")
+                val assetPath = uriString.removePrefix("asset://")
+                return context.assets.open(assetPath).use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }
+            }
+
+            // 🎨 Release 빌드: assets_textures_* 형식 처리 (React Native bundled assets)
+            // 예: assets_textures_animal_02_dog → drawable 리소스로 로드
+            if (uriString.startsWith("assets_") || uriString.matches(Regex("^[a-z_0-9]+$"))) {
+                android.util.Log.d("PaintCanvas", "🎨 Bundled asset 이름 감지: $uriString")
+                return loadBitmapFromDrawable("drawable://$uriString")
+            }
+
             val uri = Uri.parse(uriString)
 
             // ⚡ 최적화: GenerateScreen에서 이미 최적화된 이미지는 그대로 로드
@@ -1856,6 +1951,64 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         return inSampleSize
     }
 
+    /**
+     * HTTP/HTTPS URL에서 비트맵 로드 (Metro bundler asset 등)
+     */
+    private fun loadBitmapFromUrl(urlString: String): Bitmap? {
+        return try {
+            val url = java.net.URL(urlString)
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.doInput = true
+            connection.connectTimeout = 10000
+            connection.readTimeout = 10000
+            connection.connect()
+
+            val inputStream = connection.inputStream
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream.close()
+            connection.disconnect()
+
+            android.util.Log.d("PaintCanvas", "🌐 HTTP에서 비트맵 로드 성공: ${bitmap?.width}x${bitmap?.height}")
+            bitmap
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ HTTP 비트맵 로드 실패: ${e.message}")
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * 🎨 drawable:// URI에서 비트맵 로드 (Release 빌드용)
+     * React Native Release 빌드에서 Image.resolveAssetSource()는 drawable://resName 형식 반환
+     */
+    private fun loadBitmapFromDrawable(drawableUri: String): Bitmap? {
+        return try {
+            // drawable://animal_01_cat 형식에서 리소스 이름 추출
+            val resourceName = drawableUri.removePrefix("drawable://")
+                .replace(".png", "")
+                .replace(".jpg", "")
+                .replace("-", "_")  // 하이픈을 언더스코어로 변환 (Android 리소스 규칙)
+
+            android.util.Log.d("PaintCanvas", "🎨 drawable 리소스 찾기: $resourceName")
+
+            // 리소스 ID 조회
+            val resourceId = context.resources.getIdentifier(resourceName, "drawable", context.packageName)
+
+            if (resourceId != 0) {
+                val bitmap = BitmapFactory.decodeResource(context.resources, resourceId)
+                android.util.Log.d("PaintCanvas", "🎨 drawable 로드 성공: ${bitmap?.width}x${bitmap?.height}")
+                bitmap
+            } else {
+                android.util.Log.e("PaintCanvas", "❌ drawable 리소스 없음: $resourceName")
+                null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PaintCanvas", "❌ drawable 로드 실패: ${e.message}")
+            e.printStackTrace()
+            null
+        }
+    }
+
     // 색칠된 셀 텍스처 캐시 (색상별로 캐싱)
     // ⚠️ 안전성: LinkedHashMap + recycle 조합은 recycled bitmap 크래시 유발
     // 대신 단순 HashMap 사용 (색상 수는 보통 20개 미만으로 메모리 문제 없음)
@@ -1894,15 +2047,19 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             // 예: maxZoom=10, scaleFactor=8 → 80% 줌
             val zoomRatio = scaleFactor / maxZoom
 
-            // ⚡ 대형 그리드(>=100) 추가 최적화: 40% 줌 미만에서 텍스처 완전 스킵
+            // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
+            // 🎨 사용자 선택 텍스처 우선, 없으면 기본 텍스처 사용
+            val pattern = textureBitmap ?: filledCellPatternBitmap
+
+            // 🎨 사용자가 텍스처를 선택했으면 줌 레벨과 무관하게 항상 표시
+            val hasUserTexture = textureBitmap != null && !textureBitmap!!.isRecycled
+
+            // ⚡ 대형 그리드(>=100) 추가 최적화: 40% 줌 미만에서 텍스처 완전 스킵 (사용자 텍스처 제외)
             // 100+ 그리드는 셀이 매우 작아서 텍스처가 거의 안 보임 → 렌더링 낭비 방지
             val textureThreshold = if (isLargeGridMode) 0.4f else TEXTURE_VISIBLE_ZOOM_THRESHOLD
-            val shouldShowTexture = zoomRatio >= textureThreshold
+            val shouldShowTexture = hasUserTexture || zoomRatio >= textureThreshold
 
-            // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
-            val pattern = filledCellPatternBitmap
-
-            // ⚡ 텍스처 비활성화 조건: 줌 부족 OR 패턴 없음/손상
+            // ⚡ 텍스처 비활성화 조건: 패턴 없음/손상 (줌은 이미 위에서 체크)
             if (!shouldShowTexture || pattern == null || pattern.isRecycled) {
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
@@ -1914,8 +2071,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
 
             // 2단계: 텍스처를 반투명 오버레이로 그리기 (명암만 추가)
-            if (baseTextureShader == null) {
-                val squarePattern = getSquarePattern(pattern)
+            // 🎨 사용자 텍스처가 변경되면 shader 재생성
+            val currentPattern = textureBitmap ?: filledCellPatternBitmap
+            if (baseTextureShader == null || currentTextureId != textureUri) {
+                currentTextureId = textureUri
+                val squarePattern = getSquarePattern(currentPattern!!)
                 if (!squarePattern.isRecycled) {
                     baseTextureShader = BitmapShader(squarePattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
                 }
@@ -2483,8 +2643,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
         } else {
             // WEAVE 모드: 텍스처 합성
-            val pattern = filledCellPatternBitmap
-            if (pattern != null) {
+            // 🎨 사용자 선택 텍스처 우선, 없으면 기본 텍스처 사용
+            val pattern = textureBitmap ?: filledCellPatternBitmap
+            if (pattern != null && !pattern.isRecycled) {
                 // ⚡ OOM 방지: 캐시 크기 제한 (대형 그리드에서 더 작은 캐시)
                 val maxCacheSize = getMaxTextureCacheSize()
                 val texturedBitmap = if (filledCellTextureCache.containsKey(color)) {
@@ -2646,6 +2807,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * SharedPreferences에서 저장된 진행 상황 복원
      */
     private fun loadProgressFromPrefs() {
+        // 🗑️ clearProgress가 호출된 경우 복원 건너뛰기
+        if (shouldClearProgress) {
+            android.util.Log.d("PaintCanvas", "🗑️ shouldClearProgress=true, 복원 건너뛰기")
+            isProgressLoaded = true
+            return
+        }
+
         val gameId = currentGameId ?: run {
             // gameId가 없으면 완료 처리 (onDraw에서 notifyCanvasReady 호출)
             isProgressLoaded = true
@@ -2655,6 +2823,14 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // ⚡ 비동기 로딩으로 메인 스레드 블로킹 방지
         imageLoadScope.launch {
             try {
+                // 🗑️ 비동기 작업 중에도 플래그 재확인
+                if (shouldClearProgress) {
+                    withContext(Dispatchers.Main) {
+                        isProgressLoaded = true
+                    }
+                    return@launch
+                }
+
                 val json = prefs.getString(gameId, null)
                 if (json == null) {
                     // 저장된 데이터가 없으면 (새 퍼즐) 완료 처리
@@ -2678,6 +2854,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 }
                 val wrongArray = data.optJSONArray("wrongCells")
                 val colorMapObj = data.optJSONObject("paintedColors")
+
+                // 🔍 뷰포트 위치 복원 데이터
+                val savedScaleFactor = data.optDouble("scaleFactor", 1.0).toFloat()
+                val savedTranslateX = data.optDouble("translateX", 0.0).toFloat()
+                val savedTranslateY = data.optDouble("translateY", 0.0).toFloat()
+                val savedLastPaintedCell = if (data.has("lastPaintedCell")) data.optInt("lastPaintedCell", -1) else -1
 
                 // 백그라운드에서 데이터 파싱
                 val localGridSize = gridSize
@@ -2754,6 +2936,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         hasUserPainted = true
                     }
 
+                    // 🔍 마지막 색칠 위치 복원
+                    if (savedLastPaintedCell >= 0) {
+                        lastPaintedCellIndex = savedLastPaintedCell
+                    }
+
+                    // 🔍 뷰포트 위치 복원 (캔버스 크기가 설정된 후 적용)
+                    if (savedScaleFactor > 1f || savedTranslateX != 0f || savedTranslateY != 0f) {
+                        pendingViewportRestore = Triple(savedScaleFactor, savedTranslateX, savedTranslateY)
+                        android.util.Log.d("PaintCanvas", "🔍 뷰포트 복원 예약: scale=$savedScaleFactor, tx=$savedTranslateX, ty=$savedTranslateY")
+                    }
+
                     isProgressLoaded = true  // 🚀 진행 상황 로딩 완료 플래그
                     android.util.Log.d("PaintCanvas", "✅ 진행 상황 복원 완료: filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
                     invalidate()  // onDraw에서 notifyCanvasReady 호출
@@ -2770,21 +2963,32 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // ⚡ 저장 디바운스용 핸들러
+    private var saveProgressRunnable: Runnable? = null
+    private val saveHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val SAVE_DEBOUNCE_MS = 500L  // 500ms 디바운스
+
     /**
      * ⚡ 진행 상황을 SharedPreferences에 비동기 저장 (UI 블로킹 방지)
-     * 일반 색칠 중에는 apply()로 비동기 저장
+     * 일반 색칠 중에는 apply()로 비동기 저장 + 500ms 디바운스
      */
     private fun saveProgressToPrefs() {
-        val gameId = currentGameId ?: return
-        if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return
+        // ⚡ 기존 예약된 저장 취소 (디바운스)
+        saveProgressRunnable?.let { saveHandler.removeCallbacks(it) }
 
-        try {
-            val data = buildSaveData()
-            // ⚡ apply() 사용: 비동기 저장으로 UI 스레드 블로킹 방지
-            prefs.edit().putString(gameId, data.toString()).apply()
-        } catch (e: Exception) {
-            android.util.Log.e("PaintCanvas", "❌ saveProgressToPrefs 오류: ${e.message}")
+        saveProgressRunnable = Runnable {
+            val gameId = currentGameId ?: return@Runnable
+            if (filledCells.isEmpty() && wrongPaintedCells.isEmpty()) return@Runnable
+
+            try {
+                val data = buildSaveData()
+                // ⚡ apply() 사용: 비동기 저장으로 UI 스레드 블로킹 방지
+                prefs.edit().putString(gameId, data.toString()).apply()
+            } catch (e: Exception) {
+                android.util.Log.e("PaintCanvas", "❌ saveProgressToPrefs 오류: ${e.message}")
+            }
         }
+        saveHandler.postDelayed(saveProgressRunnable!!, SAVE_DEBOUNCE_MS)
     }
 
     /**
@@ -2818,6 +3022,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             put("wrongCells", wrongArray)
             put("paintedColors", colorMapObj)
             put("timestamp", System.currentTimeMillis())
+            // 🔍 뷰포트 위치 저장 (마지막 색칠 위치로 자동 이동용)
+            put("scaleFactor", scaleFactor.toDouble())
+            put("translateX", translateX.toDouble())
+            put("translateY", translateY.toDouble())
+            // 마지막 색칠한 셀 위치 저장
+            if (lastPaintedCellIndex >= 0) put("lastPaintedCell", lastPaintedCellIndex)
         }
     }
 
@@ -2844,5 +3054,65 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         } catch (e: Exception) {
             android.util.Log.e("PaintCanvas", "❌ 진행 상황 저장 실패: ${e.message}")
         }
+    }
+
+    /**
+     * 🗑️ 진행 상황 초기화 (갤러리 리셋 시 호출)
+     * - 메모리 내 상태 초기화
+     * - SharedPreferences에서 데이터 삭제
+     * - shouldClearProgress 플래그 설정 (loadProgressFromPrefs 무시용)
+     */
+    private var shouldClearProgress = false
+
+    fun clearProgress() {
+        val gameId = currentGameId
+        android.util.Log.d("PaintCanvas", "🗑️ clearProgress 호출: gameId=$gameId")
+
+        // 플래그 설정 (이후 loadProgressFromPrefs 호출 시 무시)
+        shouldClearProgress = true
+
+        // 1. 메모리 내 상태 초기화
+        filledCells.clear()
+        wrongPaintedCells.clear()
+        filledCellIndices.clear()
+        wrongCellIndices.clear()
+        paintedColorMapInt.clear()
+        hasUserPainted = false  // 새로 시작이므로 리셋
+
+        // 2. SharedPreferences에서 삭제
+        if (gameId != null) {
+            prefs.edit().remove(gameId).commit()  // commit()으로 즉시 삭제
+            android.util.Log.d("PaintCanvas", "🗑️ SharedPreferences에서 $gameId 삭제 완료")
+        }
+
+        // 3. 진행 상황 로딩 완료 처리 (빈 상태로)
+        isProgressLoaded = true
+
+        // 4. 화면 갱신
+        invalidate()
+    }
+
+    /**
+     * 🗑️ 특정 gameId의 진행 상황 삭제 (Module에서 호출)
+     * View가 생성되기 전에도 호출 가능
+     */
+    fun clearProgressForGame(gameId: String) {
+        android.util.Log.d("PaintCanvas", "🗑️ clearProgressForGame 호출: $gameId (currentGameId=$currentGameId)")
+
+        // 현재 View의 gameId와 일치하면 메모리도 초기화
+        if (currentGameId == gameId) {
+            shouldClearProgress = true
+            filledCells.clear()
+            wrongPaintedCells.clear()
+            filledCellIndices.clear()
+            wrongCellIndices.clear()
+            paintedColorMapInt.clear()
+            hasUserPainted = false
+            isProgressLoaded = true
+        }
+
+        // SharedPreferences에서 삭제
+        prefs.edit().remove(gameId).commit()
+        android.util.Log.d("PaintCanvas", "🗑️ clearProgressForGame: SharedPreferences에서 $gameId 삭제 완료")
     }
 }

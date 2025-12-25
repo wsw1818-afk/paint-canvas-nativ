@@ -9,6 +9,7 @@ import { savePuzzle } from '../utils/puzzleStorage';
 import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { t, addLanguageChangeListener } from '../locales';
+import { getPoints, deductPoints, getPuzzleCost } from '../utils/pointsStorage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const loadingImage = require('../../assets/loading-image.png');
@@ -32,7 +33,11 @@ export default function GenerateScreen({ route, navigation }) {
   const [completionMode, setCompletionMode] = useState('ORIGINAL'); // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
   const [selectedImage, setSelectedImage] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0); // 0~100 진행률
+  const [loadingStep, setLoadingStep] = useState(''); // 현재 단계 텍스트
+  const [previewImage, setPreviewImage] = useState(null); // 점진적 로딩용 미리보기
   const [permissionReady, setPermissionReady] = useState(false);
+  const [currentPoints, setCurrentPoints] = useState(0); // 현재 보유 포인트
   const isMounted = useRef(true);
 
   // 컴포넌트 마운트 시 권한 미리 요청 (ActivityResultLauncher 초기화 보장)
@@ -66,6 +71,19 @@ export default function GenerateScreen({ route, navigation }) {
       isMounted.current = false;
     };
   }, [sourceType]);
+
+  // 💎 포인트 로드
+  useEffect(() => {
+    const loadPoints = async () => {
+      const points = await getPoints();
+      setCurrentPoints(points);
+    };
+    loadPoints();
+
+    // 언어 변경 시 포인트 재로드
+    const removeListener = addLanguageChangeListener(loadPoints);
+    return removeListener;
+  }, []);
 
   const getSourceInfo = () => {
     switch (sourceType) {
@@ -155,40 +173,64 @@ export default function GenerateScreen({ route, navigation }) {
       return;
     }
 
+    // 💎 포인트 확인 및 차감
+    const difficulty = DIFFICULTIES.find(d => d.id === selectedDifficulty);
+    const cost = getPuzzleCost(difficulty.colors);
+    const pointsCheck = await deductPoints(cost);
+
+    if (!pointsCheck.success) {
+      const shortfall = cost - pointsCheck.currentPoints;
+      Alert.alert(
+        t('generate.pointsRequired') || '포인트 필요',
+        t('generate.pointsShortfall', { current: pointsCheck.currentPoints, cost, shortfall }) ||
+        `포인트가 부족합니다.\n\n필요: ${cost.toLocaleString()}P\n보유: ${pointsCheck.currentPoints.toLocaleString()}P\n부족: ${shortfall.toLocaleString()}P\n\n더 많은 퍼즐을 색칠하여 포인트를 획득하세요!`
+      );
+      return;
+    }
+
+    // 포인트 차감 성공 → 화면에 반영
+    setCurrentPoints(pointsCheck.newPoints);
+
     try {
       setLoading(true);
-      const difficulty = DIFFICULTIES.find(d => d.id === selectedDifficulty);
+      setLoadingProgress(0);
+      setLoadingStep(t('generate.stepPreparing') || '준비 중...');
 
       console.log('원본 이미지 URI:', selectedImage.uri);
 
       // ⚡ 최적화: gridSize 기반 이미지 크기 결정 (한 번만 리사이즈)
-      // - gridSize >= 100 (대형 그리드) → 256px (OOM 방지 강화)
-      // - gridSize < 100 (소형 그리드) → 1024px (고화질 유지)
-      // 170×170 격자에서 256px = 셀당 1.5px, 메모리 75% 감소
       const optimizedSize = difficulty.gridSize >= 100 ? 256 : 1024;
       const thumbnailSize = 200;  // 갤러리 목록용 썸네일
 
       console.log(`📐 최적화 크기 결정: gridSize=${difficulty.gridSize} → ${optimizedSize}px`);
 
-      // 1단계: 최적화된 크기로 한 번만 리사이즈
-      const resizedImage = await manipulateAsync(
-        selectedImage.uri,
-        [{ resize: { width: optimizedSize, height: optimizedSize } }],
-        { compress: 0.8, format: SaveFormat.JPEG, base64: false }
-      );
+      // ⚡ 점진적 로딩: 썸네일 먼저 생성하여 미리보기 표시
+      setLoadingProgress(5);
+      setLoadingStep(t('generate.stepThumbnail') || '미리보기 생성 중...');
 
-      console.log('✅ 리사이즈 완료:', resizedImage.uri);
-
-      // 2단계: 썸네일 생성 (갤러리 목록용)
       const thumbnailImage = await manipulateAsync(
         selectedImage.uri,
         [{ resize: { width: thumbnailSize, height: thumbnailSize } }],
         { compress: 0.7, format: SaveFormat.JPEG, base64: false }
       );
 
+      // 🖼️ 썸네일 즉시 표시 (체감 속도 향상)
+      setPreviewImage(thumbnailImage.uri);
+      setLoadingProgress(15);
       console.log('✅ 썸네일 생성 완료:', thumbnailImage.uri);
 
-      // 3단계: 파일 저장 (최적화 이미지 + 썸네일)
+      // 1단계: 최적화된 크기로 리사이즈
+      setLoadingStep(t('generate.stepResize') || '이미지 최적화 중...');
+      const resizedImage = await manipulateAsync(
+        selectedImage.uri,
+        [{ resize: { width: optimizedSize, height: optimizedSize } }],
+        { compress: 0.8, format: SaveFormat.JPEG, base64: false }
+      );
+      setLoadingProgress(30);
+      console.log('✅ 리사이즈 완료:', resizedImage.uri);
+
+      // 2단계: 파일 저장
+      setLoadingStep(t('generate.stepSaving') || '파일 저장 중...');
       const timestamp = Date.now();
       const fileName = `puzzle_${timestamp}.jpg`;
       const thumbnailFileName = `puzzle_${timestamp}_thumb.jpg`;
@@ -204,24 +246,24 @@ export default function GenerateScreen({ route, navigation }) {
         from: thumbnailImage.uri,
         to: thumbnailUri
       });
-
+      setLoadingProgress(40);
       console.log('✅ 파일 저장 완료:', permanentUri);
-      console.log('✅ 썸네일 저장 완료:', thumbnailUri);
 
-      // 4단계: 이미지를 격자로 처리하여 색상 추출
-      // ⚡ imageProcessor에 이미 최적화된 이미지 전달 (중복 리사이즈 방지)
+      // 3단계: 색상 추출 (가장 오래 걸림)
+      setLoadingStep(t('generate.stepAnalyzing') || '색상 분석 중...');
       const processedImage = await processImage(
         permanentUri,
         difficulty.gridSize,
         difficulty.colors,
-        optimizedSize  // 이미 최적화된 크기 전달
+        optimizedSize
       );
-
+      setLoadingProgress(80);
       console.log('✅ 이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
 
-      // 5단계: WEAVE 모드 선택 시 위빙 텍스처 미리보기 이미지 생성
+      // 4단계: WEAVE 모드 선택 시 위빙 텍스처 미리보기
       let weavePreviewUri = null;
       if (completionMode === 'WEAVE' && processedImage.dominantColors && processedImage.gridColors) {
+        setLoadingStep(t('generate.stepWeave') || '위빙 텍스처 생성 중...');
         console.log('🧶 위빙 텍스처 미리보기 이미지 생성 중...');
         try {
           weavePreviewUri = await generateWeavePreviewImage(
@@ -235,24 +277,29 @@ export default function GenerateScreen({ route, navigation }) {
           console.warn('위빙 미리보기 생성 실패, 원본 사용:', weaveError);
         }
       }
+      setLoadingProgress(90);
 
+      // 5단계: 퍼즐 데이터 저장
+      setLoadingStep(t('generate.stepFinishing') || '저장 완료 중...');
       const puzzleData = {
         title: `퍼즐 ${new Date().toLocaleString('ko-KR')}`,
-        imageUri: permanentUri,  // 최적화된 이미지 URI
-        thumbnailUri: thumbnailUri,  // 썸네일 이미지 URI (갤러리 목록용)
-        weavePreviewUri: weavePreviewUri,  // 위빙 텍스처 미리보기 이미지 (WEAVE 모드 전용)
+        imageUri: permanentUri,
+        thumbnailUri: thumbnailUri,
+        weavePreviewUri: weavePreviewUri,
         colorCount: difficulty.colors,
         gridSize: difficulty.gridSize,
         difficulty: selectedDifficulty,
         completionMode: completionMode,
         gridColors: processedImage.gridColors,
         dominantColors: processedImage.dominantColors,
-        optimizedSize: optimizedSize,  // 최적화된 이미지 크기 기록
-        optimizedAt: Date.now(),  // 최적화 시점 기록 (마이그레이션 체크용)
+        optimizedSize: optimizedSize,
+        optimizedAt: Date.now(),
       };
 
       await savePuzzle(puzzleData);
+      setLoadingProgress(100);
       setLoading(false);
+      setPreviewImage(null);
 
       // 격자 적용 완료 메시지 표시 후 갤러리로 이동
       Alert.alert(
@@ -267,24 +314,38 @@ export default function GenerateScreen({ route, navigation }) {
       );
     } catch (error) {
       setLoading(false);
+      setPreviewImage(null);
+      setLoadingProgress(0);
       console.error('퍼즐 저장 실패:', error);
       Alert.alert(t('generate.saveFailed'), error.message || t('generate.saveFailedMessage'));
     }
   };
 
-  // 퍼즐 생성 중 로딩 화면
+  // 퍼즐 생성 중 로딩 화면 (프로그레스 바 + 점진적 로딩)
   if (loading && selectedImage) {
     return (
       <View style={styles.loadingOverlay}>
         <StatusBar barStyle="light-content" backgroundColor="#000000" translucent />
+
+        {/* 🖼️ 점진적 로딩: 썸네일 미리보기 또는 기본 로딩 이미지 */}
         <Image
-          source={loadingImage}
-          style={styles.loadingFullImage}
+          source={previewImage ? { uri: previewImage } : loadingImage}
+          style={[
+            styles.loadingFullImage,
+            previewImage && styles.loadingPreviewImage  // 미리보기일 때 둥근 모서리
+          ]}
           resizeMode="contain"
         />
+
         <View style={styles.loadingStatusContainer}>
-          <ActivityIndicator size="large" color="#1DB954" />
-          <Text style={styles.loadingStatusText}>{t('generate.processing')}</Text>
+          {/* 📊 프로그레스 바 */}
+          <View style={styles.progressBarContainer}>
+            <View style={[styles.progressBar, { width: `${loadingProgress}%` }]} />
+          </View>
+          <Text style={styles.progressText}>{loadingProgress}%</Text>
+
+          {/* 현재 단계 표시 */}
+          <Text style={styles.loadingStatusText}>{loadingStep || t('generate.processing')}</Text>
         </View>
       </View>
     );
@@ -302,7 +363,10 @@ export default function GenerateScreen({ route, navigation }) {
           <View style={styles.headerCenter}>
             <Text style={styles.title}>{t('generate.title')}</Text>
           </View>
-          <View style={styles.headerRight} />
+          <View style={styles.pointsContainer}>
+            <Text style={styles.pointsLabel}>💎</Text>
+            <Text style={styles.pointsValue}>{currentPoints.toLocaleString()}</Text>
+          </View>
         </View>
 
           <ScrollView
@@ -366,6 +430,12 @@ export default function GenerateScreen({ route, navigation }) {
                 </Text>
                 <Text style={styles.difficultyDesc}>
                   {t('generate.colorGrid', { colors: diff.colors, gridSize: diff.gridSize })}
+                </Text>
+                <Text style={[
+                  styles.difficultyCost,
+                  currentPoints < getPuzzleCost(diff.colors) && styles.difficultyCostInsufficient
+                ]}>
+                  💎 {getPuzzleCost(diff.colors).toLocaleString()}P
                 </Text>
               </View>
               {selectedDifficulty === diff.id && (
@@ -453,8 +523,32 @@ const styles = StyleSheet.create({
   loadingStatusText: {
     color: '#FFFFFF',
     fontSize: 16,
-    marginTop: 12,
+    marginTop: 8,
     fontWeight: '500',
+  },
+  loadingPreviewImage: {
+    borderRadius: 16,
+    width: SCREEN_WIDTH * 0.7,
+    height: SCREEN_WIDTH * 0.7,
+  },
+  progressBarContainer: {
+    width: SCREEN_WIDTH * 0.7,
+    height: 8,
+    backgroundColor: '#333333',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#1DB954',
+    borderRadius: 4,
+  },
+  progressText: {
+    color: '#1DB954',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 8,
+    marginBottom: 4,
   },
   container: {
     flex: 1,
@@ -494,6 +588,25 @@ const styles = StyleSheet.create({
     fontSize: SpotifyFonts.lg,
     fontWeight: SpotifyFonts.bold,
     color: SpotifyColors.textPrimary,
+  },
+  pointsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SpotifyColors.backgroundElevated,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: SpotifyColors.divider,
+  },
+  pointsLabel: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  pointsValue: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: SpotifyColors.primary,
   },
   scrollView: {
     flex: 1,
@@ -600,6 +713,15 @@ const styles = StyleSheet.create({
   difficultyDesc: {
     fontSize: SpotifyFonts.sm,
     color: SpotifyColors.textSecondary,
+  },
+  difficultyCost: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: SpotifyColors.primary,
+    marginTop: 4,
+  },
+  difficultyCostInsufficient: {
+    color: SpotifyColors.error,
   },
   checkmark: {
     width: 24,

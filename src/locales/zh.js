@@ -77,6 +77,14 @@ export default {
     processing: '正在创建拼图...',
     analyzeColors: '正在分析颜色...',
     initializing: '正在初始化...',
+    // 加载步骤消息
+    stepPreparing: '准备中...',
+    stepThumbnail: '正在创建预览...',
+    stepResize: '正在优化图片...',
+    stepSaving: '正在保存文件...',
+    stepAnalyzing: '正在分析颜色...',
+    stepWeave: '正在创建编织纹理...',
+    stepFinishing: '正在完成...',
     tapToSelect: '点击选择',
     changeImage: '更换图片',
     permissionRequired: '需要权限',
@@ -89,16 +97,19 @@ export default {
     gridAppliedMessage: '图片已保存。请在画廊中查看。',
     saveFailed: '保存失败',
     saveFailedMessage: '保存图片时发生错误。',
+    pointsRequired: '需要积分',
+    pointsShortfall: '积分不足。\n\n需要: {{cost}}P\n当前: {{current}}P\n不足: {{shortfall}}P\n\n涂更多拼图来获得积分！',
   },
 
   // 游戏页面
   play: {
     preparing: '正在准备画布...',
     completeTitle: '🎉 恭喜！',
-    completeMessage: '你完成了拼图！\n在画廊中查看你的作品。',
+    completeMessage: '你完成了拼图！\n\n得分率: {{percent}}%\n奖励: +{{reward}}P\n\n在画廊中查看你的作品。',
     undo: '撤销',
     wrongCells: '{{count}}个',
     currentPosition: '当前位置',
+    remainingCells: '剩余{{count}}格',
   },
 
   // 设置页面

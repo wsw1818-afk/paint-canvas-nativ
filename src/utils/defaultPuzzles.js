@@ -1,36 +1,25 @@
 /**
  * 기본 퍼즐 생성 유틸리티
- * - 앱 최초 실행 시 기본 갤러리 퍼즐 2개 자동 생성
+ * - 앱 최초 실행 시 기본 갤러리 퍼즐 자동 생성
+ * - 초보자용 + 고급용 = 총 2개 퍼즐
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Asset } from 'expo-asset';
 import { savePuzzle } from './puzzleStorage';
 import { processImage } from './imageProcessor';
 
-const DEFAULT_PUZZLES_KEY = '@defaultPuzzlesCreated';
+const DEFAULT_PUZZLES_KEY = '@defaultPuzzlesCreated_v6'; // v6: 고양이+장미 2개 퍼즐
 
 // 정적 import (동적 require는 Release 빌드에서 에러)
 const ASSET_MODULES = {
-  'basic1.png': require('../../assets/basic1.png'),
-  'basic2.png': require('../../assets/basic2.png'),
+  'animal_01_cat.png': require('../../assets/textures/animal_01_cat.png'),
+  'flower_01_rose.png': require('../../assets/textures/flower_01_rose.png'),
 };
 
 const DEFAULT_PUZZLES = [
-  {
-    assetName: 'basic1.png',
-    title: '기본 퍼즐 1',
-    difficulty: 'EASY',
-    colorCount: 16,
-    gridSize: 120,
-  },
-  {
-    assetName: 'basic2.png',
-    title: '기본 퍼즐 2',
-    difficulty: 'NORMAL',
-    colorCount: 36,
-    gridSize: 160,
-  },
+  { assetName: 'animal_01_cat.png', title: '고양이', difficulty: 'EASY', colorCount: 16, gridSize: 120 },
+  { assetName: 'flower_01_rose.png', title: '장미', difficulty: 'HARD', colorCount: 64, gridSize: 200 },
 ];
 
 /**
@@ -45,7 +34,7 @@ export const createDefaultPuzzles = async () => {
       return { created: false, count: 0 };
     }
 
-    console.log('[기본 퍼즐] 생성 시작...');
+    console.log('[기본 퍼즐] 생성 시작... (총 2개)');
     let createdCount = 0;
 
     for (const puzzle of DEFAULT_PUZZLES) {
@@ -69,7 +58,7 @@ export const createDefaultPuzzles = async () => {
           to: destUri,
         });
 
-        console.log(`[기본 퍼즐] 이미지 복사 완료: ${destUri}`);
+        console.log(`[기본 퍼즐] 이미지 복사 완료: ${puzzle.title}`);
 
         // 3. 이미지 처리 (격자 생성)
         const optimizedSize = puzzle.gridSize >= 100 ? 256 : 1024;
@@ -97,7 +86,7 @@ export const createDefaultPuzzles = async () => {
           completed: false,
         });
 
-        console.log(`✅ [기본 퍼즐] "${puzzle.title}" 생성 완료`);
+        console.log(`✅ [기본 퍼즐] "${puzzle.title}" 생성 완료 (${createdCount + 1}/2)`);
         createdCount++;
       } catch (error) {
         console.error(`❌ [기본 퍼즐] "${puzzle.title}" 생성 실패:`, error);

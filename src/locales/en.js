@@ -77,6 +77,14 @@ export default {
     processing: 'Creating puzzle...',
     analyzeColors: 'Analyzing colors...',
     initializing: 'Initializing...',
+    // Loading step messages
+    stepPreparing: 'Preparing...',
+    stepThumbnail: 'Creating preview...',
+    stepResize: 'Optimizing image...',
+    stepSaving: 'Saving file...',
+    stepAnalyzing: 'Analyzing colors...',
+    stepWeave: 'Creating weave texture...',
+    stepFinishing: 'Finalizing...',
     tapToSelect: 'Tap to select',
     changeImage: 'Change Image',
     permissionRequired: 'Permission Required',
@@ -89,16 +97,19 @@ export default {
     gridAppliedMessage: 'Image saved. Check it in the gallery.',
     saveFailed: 'Save Failed',
     saveFailedMessage: 'An error occurred while saving the image.',
+    pointsRequired: 'Points Required',
+    pointsShortfall: 'Not enough points.\n\nRequired: {{cost}}P\nCurrent: {{current}}P\nShortfall: {{shortfall}}P\n\nColor more puzzles to earn points!',
   },
 
   // Play Screen
   play: {
     preparing: 'Preparing canvas...',
     completeTitle: '🎉 Congratulations!',
-    completeMessage: 'You completed the puzzle!\nCheck your artwork in the gallery.',
+    completeMessage: 'You completed the puzzle!\n\nScore: {{percent}}%\nReward: +{{reward}}P\n\nCheck your artwork in the gallery.',
     undo: 'Undo',
     wrongCells: '{{count}}',
     currentPosition: 'Current Position',
+    remainingCells: '{{count}} cells left',
   },
 
   // Settings Screen

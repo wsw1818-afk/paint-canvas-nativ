@@ -30,6 +30,17 @@ class PaintCanvasModule : Module() {
       currentView?.setViewportPosition(x, y)
     }
 
+    // 🗑️ 특정 gameId의 진행 상황 삭제 (갤러리 리셋 시 JS에서 호출)
+    Function("clearProgressForGame") { gameId: String ->
+      currentView?.clearProgressForGame(gameId)
+        ?: android.util.Log.d("PaintCanvas", "🗑️ clearProgressForGame: currentView가 없어서 SharedPreferences 직접 삭제 - $gameId")
+      // View가 없어도 SharedPreferences에서 삭제
+      val context = appContext.reactContext ?: return@Function
+      val prefs = context.getSharedPreferences("PaintCanvasProgress", android.content.Context.MODE_PRIVATE)
+      prefs.edit().remove(gameId).commit()
+      android.util.Log.d("PaintCanvas", "🗑️ clearProgressForGame 완료: $gameId")
+    }
+
     View(PaintCanvasView::class) {
       // View 생성 시 참조 저장
       OnViewDidUpdateProps { view: PaintCanvasView ->
@@ -63,6 +74,14 @@ class PaintCanvasModule : Module() {
         view.setGameId(gameId)
       }
 
+      // 🗑️ 진행 상황 초기화 플래그 (갤러리 리셋 시 사용)
+      // gameId 설정 후에 처리되어야 함
+      Prop("clearProgress") { view: PaintCanvasView, shouldClear: Boolean ->
+        if (shouldClear) {
+          view.clearProgress()
+        }
+      }
+
       Prop("filledCells") { view: PaintCanvasView, cells: List<String> ->
         view.setFilledCells(cells)
       }
@@ -87,6 +106,11 @@ class PaintCanvasModule : Module() {
 
       Prop("completionMode") { view: PaintCanvasView, mode: String ->
         view.setCompletionMode(mode)
+      }
+
+      // 🎨 사용자 선택 텍스처 URI
+      Prop("textureUri") { view: PaintCanvasView, uri: String? ->
+        view.setTextureUri(uri)
       }
 
       Events("onCellPainted", "onCanvasReady", "onViewportChange", "onNativeLog")

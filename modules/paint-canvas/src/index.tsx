@@ -61,4 +61,12 @@ export function setViewportPosition(x: number, y: number): void {
   PaintCanvasModule.setViewportPosition(x, y);
 }
 
+/**
+ * 🗑️ 특정 gameId의 진행 상황 삭제 (갤러리 리셋 시 사용)
+ * @param gameId 삭제할 게임 ID
+ */
+export function clearProgressForGame(gameId: string): void {
+  PaintCanvasModule.clearProgressForGame(gameId);
+}
+
 export const PaintCanvasView = requireNativeViewManager<PaintCanvasProps>('PaintCanvas');

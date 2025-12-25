@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert, Image, StatusBar, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition } from 'paint-canvas-native';
+import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition, clearProgressForGame } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
@@ -9,6 +9,8 @@ import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../t
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
+import { addPoints, getPuzzleCost } from '../utils/pointsStorage';
+import { getTextureById } from '../utils/textureStorage';
 
 // 🎯 광고 ID 설정
 // - 정식 ID (플레이스토어): 'ca-app-pub-8246295829048098/7057199542'
@@ -182,10 +184,21 @@ const COLOR_PALETTE = [
 ];
 
 export default function PlayScreenNativeModule({ route, navigation }) {
-  const { puzzleId, imageUri, colorCount = 36, gridSize: paramGridSize, gridColors, dominantColors: paramDominantColors, completionMode: paramCompletionMode } = route.params || {};
+  const { puzzleId, imageUri, colorCount = 36, gridSize: paramGridSize, gridColors, dominantColors: paramDominantColors, completionMode: paramCompletionMode, isReset, textureUri: paramTextureUri } = route.params || {};
   const gridSize = paramGridSize || 250; // 기본 250x250 격자 (높은 난이도, 많은 셀)
   const completionMode = paramCompletionMode || 'ORIGINAL'; // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
+
+  // 🔍 디버그 로그
+  console.log('[PlayScreen] 🚀 시작 - isReset:', isReset, 'completionMode:', completionMode, 'textureUri:', paramTextureUri);
   const { width, height } = useWindowDimensions();
+
+  // 🎨 색상 밝기 계산 함수 (힌트 패널 텍스트 색상용)
+  const getLuminance = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  };
 
   // 64색까지 고유 라벨 생성 함수
   const generateLabel = (idx) => {
@@ -218,6 +231,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [score, setScore] = useState(60);
   const [filledCells, setFilledCells] = useState(new Set());
   const [wrongCells, setWrongCells] = useState(new Set()); // 잘못 칠한 셀 추적
+  const [everWrongCells, setEverWrongCells] = useState(new Set()); // 한 번이라도 틀린 셀 (재색칠 시 점수 X)
   const [undoMode, setUndoMode] = useState(false); // 고치기 모드
   const [viewDimensions, setViewDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }); // 전체 화면 크기 (dp)
   // 🔍 디버그 로그 상태 (프로덕션에서는 비활성화)
@@ -229,6 +243,12 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 1, height: 1 });
   const [minimapImage, setMinimapImage] = useState(null);
   const minimapUpdateRef = useRef(null);
+
+  // 🎯 남은 셀 힌트 상태
+  const [showRemainingHint, setShowRemainingHint] = useState(false);
+
+  // 🎨 텍스처 (갤러리에서 선택하여 전달받음)
+  const textureUri = paramTextureUri || null;
 
   // 📢 뒤로가기 핸들러 (5회마다 전면 광고)
   const handleBackPress = useCallback(() => {
@@ -253,6 +273,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     const fileName = imageUri.split('/').pop()?.split('.')[0] || '';
     return `native_${fileName}_${gridSize}`;
   }, [puzzleId, imageUri, gridSize]);
+
+  // 🗑️ 리셋 시 Native SharedPreferences 삭제 (View 생성 전에 호출)
+  useEffect(() => {
+    if (isReset && gameId) {
+      console.log('[PlayScreen] 🗑️ 리셋 모드 - Native SharedPreferences 삭제:', gameId);
+      clearProgressForGame(gameId);
+    }
+  }, [isReset, gameId]);
 
   // 폴드7 접힘/펼침 감지
   // 접힘: 884 x 2208 (가로)
@@ -355,9 +383,10 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         try {
           const savedData = await AsyncStorage.getItem(gameId);
           if (savedData) {
-            const { filledCells: saved, score: savedScore, wrongCells: savedWrong } = JSON.parse(savedData);
+            const { filledCells: saved, score: savedScore, wrongCells: savedWrong, everWrongCells: savedEverWrong } = JSON.parse(savedData);
             setFilledCells(new Set(saved));
             setWrongCells(new Set(savedWrong || []));
+            setEverWrongCells(new Set(savedEverWrong || savedWrong || [])); // 기존 wrongCells로 폴백
             setScore(savedScore || 60);
           }
         } catch (error) {
@@ -374,14 +403,43 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const saveProgressRef = useRef(null);
   const filledCellsRef = useRef(filledCells);
   const wrongCellsRef = useRef(wrongCells);
+  const everWrongCellsRef = useRef(everWrongCells);
   const scoreRef = useRef(score);
+
+  // ⚡ 포인트 배치 처리 (매 색칠마다 AsyncStorage 호출 방지)
+  const pendingPointsRef = useRef(0);
+  const pointsFlushTimerRef = useRef(null);
 
   // Ref 업데이트 (리렌더링 없이)
   useEffect(() => {
     filledCellsRef.current = filledCells;
     wrongCellsRef.current = wrongCells;
+    everWrongCellsRef.current = everWrongCells;
     scoreRef.current = score;
-  }, [filledCells, wrongCells, score]);
+  }, [filledCells, wrongCells, everWrongCells, score]);
+
+  // ⚡ 포인트 배치 저장 (3초 디바운스 + InteractionManager)
+  useEffect(() => {
+    if (pendingPointsRef.current > 0) {
+      if (pointsFlushTimerRef.current) {
+        clearTimeout(pointsFlushTimerRef.current);
+      }
+      pointsFlushTimerRef.current = setTimeout(() => {
+        InteractionManager.runAfterInteractions(() => {
+          const points = pendingPointsRef.current;
+          if (points > 0) {
+            pendingPointsRef.current = 0;
+            addPoints(points).catch(() => {}); // 에러 로그 제거
+          }
+        });
+      }, 3000); // ⚡ 2초 → 3초
+    }
+    return () => {
+      if (pointsFlushTimerRef.current) {
+        clearTimeout(pointsFlushTimerRef.current);
+      }
+    };
+  }, [filledCells.size]);
 
   // 🖼️ 100% 완성 시 캡처 및 저장 (한 번만 실행)
   const hasCompletedRef = useRef(false);
@@ -416,11 +474,31 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           completedAt: new Date().toISOString()
         });
 
+        // 🎁 완성 보상: 퍼즐 제작 비용의 1/4 × 점수 비율
+        const puzzleCost = getPuzzleCost(colorCount);
+        const baseReward = Math.floor(puzzleCost / 4);
+
+        // 최대 점수 계산: 초기 60점 + (전체 셀 수 × 10점)
+        const totalCells = gridSize * gridSize;
+        const maxScore = 60 + (totalCells * 10);
+        const currentScore = scoreRef.current;
+
+        // 점수 비율 계산 (10% 단위로 내림)
+        // 100% = 100%, 90~99% = 90%, 80~89% = 80%, ...
+        const scorePercent = Math.floor((currentScore / maxScore) * 10) * 10;
+        const scoreMultiplier = Math.max(0, Math.min(100, scorePercent)) / 100;
+
+        // 최종 보상 = 기본 보상 × 점수 비율
+        const completionReward = Math.floor(baseReward * scoreMultiplier);
+        await addPoints(completionReward);
+        console.log(`🎁 완성 보상: +${completionReward}P (기본 ${baseReward}P × ${scorePercent}% 점수)`);
+        console.log(`   점수: ${currentScore}/${maxScore} (${Math.floor((currentScore / maxScore) * 100)}%)`);
+
         // 📢 퍼즐 완료 시 전면 광고 표시 후 알림
         showPuzzleCompleteAd(() => {
           Alert.alert(
             t('play.completeTitle'),
-            t('play.completeMessage'),
+            t('play.completeMessage', { reward: completionReward, percent: scorePercent }),
             [{ text: t('common.confirm'), style: 'default' }]
           );
         });
@@ -435,42 +513,45 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
   // 🖼️ 진행 썸네일 캡처 (갤러리에서 진행 상황 표시용)
   // 원본 이미지 위에 색칠된 부분만 오버레이 (참조 앱 스타일)
+  // ⚡ 최적화: 30초 간격 + InteractionManager로 터치 방해 방지
   const lastThumbnailCaptureRef = useRef(0);
-  const THUMBNAIL_CAPTURE_INTERVAL = 10000; // 10초마다 썸네일 갱신
+  const THUMBNAIL_CAPTURE_INTERVAL = 30000; // ⚡ 10초 → 30초마다 썸네일 갱신
 
-  const captureProgressThumbnail = useCallback(async (progress) => {
+  const captureProgressThumbnail = useCallback((progress) => {
     if (!puzzleId) return;
 
-    // 10초 내 중복 캡처 방지
+    // 30초 내 중복 캡처 방지
     const now = Date.now();
     if (now - lastThumbnailCaptureRef.current < THUMBNAIL_CAPTURE_INTERVAL) return;
     lastThumbnailCaptureRef.current = now;
 
-    try {
-      // 📸 Native 썸네일 캡처 (원본 이미지 + 색칠된 부분 오버레이)
-      const base64Image = captureThumbnail(256);
+    // ⚡ InteractionManager로 터치 처리 후 실행
+    InteractionManager.runAfterInteractions(async () => {
+      try {
+        // 📸 Native 썸네일 캡처 (원본 이미지 + 색칠된 부분 오버레이)
+        const base64Image = captureThumbnail(256);
 
-      if (base64Image) {
-        const fileName = `progress_${puzzleId}.png`;
-        const fileUri = `${FileSystem.documentDirectory}${fileName}`;
+        if (base64Image) {
+          const fileName = `progress_${puzzleId}.png`;
+          const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
-        await FileSystem.writeAsStringAsync(fileUri, base64Image, {
-          encoding: FileSystem.EncodingType.Base64
-        });
+          await FileSystem.writeAsStringAsync(fileUri, base64Image, {
+            encoding: FileSystem.EncodingType.Base64
+          });
 
-        // 퍼즐 데이터에 진행 썸네일 URI 저장
-        await updatePuzzle(puzzleId, {
-          progressThumbnailUri: fileUri
-        });
-
-        console.log('📸 진행 썸네일 저장:', Math.round(progress) + '%');
+          // 퍼즐 데이터에 진행 썸네일 URI 저장
+          await updatePuzzle(puzzleId, {
+            progressThumbnailUri: fileUri
+          });
+        }
+      } catch (error) {
+        // 에러 로그 제거 (성능)
       }
-    } catch (error) {
-      console.error('진행 썸네일 캡처 실패:', error);
-    }
+    });
   }, [puzzleId]);
 
   // 저장 함수 (Ref 사용으로 의존성 제거)
+  // ⚡ 최적화: 3초 디바운스 + InteractionManager로 터치 방해 방지
   const saveProgress = useCallback(() => {
     if (!gameId) return;
 
@@ -478,41 +559,45 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       clearTimeout(saveProgressRef.current);
     }
 
-    saveProgressRef.current = setTimeout(async () => {
-      try {
-        const data = {
-          filledCells: Array.from(filledCellsRef.current),
-          wrongCells: Array.from(wrongCellsRef.current),
-          score: scoreRef.current,
-          timestamp: Date.now()
-        };
-        await AsyncStorage.setItem(gameId, JSON.stringify(data));
+    saveProgressRef.current = setTimeout(() => {
+      // ⚡ 터치 이벤트 처리 후 저장 실행
+      InteractionManager.runAfterInteractions(async () => {
+        try {
+          const data = {
+            filledCells: Array.from(filledCellsRef.current),
+            wrongCells: Array.from(wrongCellsRef.current),
+            everWrongCells: Array.from(everWrongCellsRef.current),
+            score: scoreRef.current,
+            timestamp: Date.now()
+          };
+          await AsyncStorage.setItem(gameId, JSON.stringify(data));
 
-        // 퍼즐 완성도 업데이트 (puzzleStorage에 저장)
-        if (puzzleId) {
-          const totalCells = gridSize * gridSize;
-          const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
-          const progress = Math.max(0, Math.min(100, (correctCells / totalCells) * 100));
+          // 퍼즐 완성도 업데이트 (puzzleStorage에 저장)
+          if (puzzleId) {
+            const totalCells = gridSize * gridSize;
+            const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
+            const progress = Math.max(0, Math.min(100, (correctCells / totalCells) * 100));
 
-          await updatePuzzle(puzzleId, {
-            progress: progress,
-            lastPlayed: new Date().toISOString()
-          });
+            await updatePuzzle(puzzleId, {
+              progress: progress,
+              lastPlayed: new Date().toISOString()
+            });
 
-          // 🖼️ 진행 중 썸네일 캡처 (1% 이상일 때만)
-          if (progress >= 1 && progress < 100) {
-            captureProgressThumbnail(progress);
+            // 🖼️ 진행 중 썸네일 캡처 (1% 이상일 때만)
+            if (progress >= 1 && progress < 100) {
+              captureProgressThumbnail(progress);
+            }
+
+            // 🎉 100% 완성 시 캡처
+            if (progress >= 100 && !hasCompletedRef.current) {
+              captureAndSaveCompletion();
+            }
           }
-
-          // 🎉 100% 완성 시 캡처
-          if (progress >= 100 && !hasCompletedRef.current) {
-            captureAndSaveCompletion();
-          }
+        } catch (error) {
+          // 저장 실패 로그 제거 (성능)
         }
-      } catch (error) {
-        console.error('Failed to save progress:', error);
-      }
-    }, 2000); // 2초 디바운스 (성능 최적화)
+      });
+    }, 3000); // ⚡ 2초 → 3초 디바운스
   }, [gameId, puzzleId, gridSize, captureAndSaveCompletion, captureProgressThumbnail]);
 
   // filledCells 변경 시 자동 저장 (score는 제외 - 너무 자주 변경됨)
@@ -558,32 +643,47 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   }, []);
 
   // 🗺️ 미니맵 이미지 갱신 함수
+  // ⚡ 최적화: 디바운스 800ms로 증가 + InteractionManager로 UI 블로킹 방지
   const updateMinimapImage = useCallback(() => {
     if (!showMinimap) return;
 
-    // 디바운스: 300ms 내 중복 호출 방지
+    // 디바운스: 800ms 내 중복 호출 방지 (300→800ms)
     if (minimapUpdateRef.current) {
       clearTimeout(minimapUpdateRef.current);
     }
 
     minimapUpdateRef.current = setTimeout(() => {
-      try {
-        const base64 = getMinimapImage(120);
-        if (base64) {
-          setMinimapImage(`data:image/png;base64,${base64}`);
+      // ⚡ InteractionManager로 애니메이션 끝난 후 실행
+      InteractionManager.runAfterInteractions(() => {
+        try {
+          const base64 = getMinimapImage(120);
+          if (base64) {
+            setMinimapImage(`data:image/png;base64,${base64}`);
+          }
+        } catch (e) {
+          // 무시 (성능 로그 제거)
         }
-      } catch (e) {
-        console.warn('미니맵 이미지 갱신 실패:', e);
-      }
-    }, 300);
+      });
+    }, 800);
   }, [showMinimap]);
 
-  // 🗺️ 미니맵 열릴 때 이미지 갱신
+  // 🗺️ 미니맵 열릴 때 + 색칠 진행 시 이미지 갱신
+  // ⚡ 최적화: 10셀마다 갱신 (매 셀 X)
+  const lastMinimapUpdateSizeRef = useRef(0);
   useEffect(() => {
     if (showMinimap && isNativeReady) {
-      updateMinimapImage();
+      // 미니맵 열릴 때 즉시 갱신
+      if (lastMinimapUpdateSizeRef.current === 0) {
+        updateMinimapImage();
+        lastMinimapUpdateSizeRef.current = filledCells.size;
+      }
+      // 10셀 이상 변경 시에만 갱신
+      else if (Math.abs(filledCells.size - lastMinimapUpdateSizeRef.current) >= 10) {
+        updateMinimapImage();
+        lastMinimapUpdateSizeRef.current = filledCells.size;
+      }
     }
-  }, [showMinimap, isNativeReady, updateMinimapImage]);
+  }, [showMinimap, isNativeReady, filledCells.size, updateMinimapImage]);
 
   // ✨ 틀린 부분 있을 때 되돌리기 버튼 반짝임
   useEffect(() => {
@@ -676,35 +776,50 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     }
 
     if (correct) {
-      // ⚡ 이미 있으면 빠른 반환
+      // ⚡ 이미 칠한 셀이면 스킵
+      if (filledCellsRef.current.has(cellKey)) return;
+
       setFilledCells(prev => {
-        if (prev.has(cellKey)) return prev;
         const newSet = new Set(prev);
         newSet.add(cellKey);
         return newSet;
       });
 
-      setScore(prev => prev + 10);
+      // 🚫 한 번이라도 틀린 적 있는 셀은 점수/포인트 추가 안 함
+      if (!everWrongCellsRef.current.has(cellKey)) {
+        setScore(s => s + 10);
+        // ⚡ 포인트는 디바운스로 배치 처리 (딜레이 방지)
+        pendingPointsRef.current += 1;
+      }
     } else {
+      // ⚡ 이미 칠한 셀이면 스킵
+      if (filledCellsRef.current.has(cellKey)) return;
+
       // 잘못 칠한 셀: wrongCells와 filledCells 모두에 추가
       setWrongCells(prev => {
-        if (prev.has(cellKey)) return prev;
         const newSet = new Set(prev);
         newSet.add(cellKey);
         return newSet;
       });
       setFilledCells(prev => {
-        if (prev.has(cellKey)) return prev;
         const newSet = new Set(prev);
         newSet.add(cellKey);
         return newSet;
       });
-      setScore(prev => Math.max(0, prev - 5));
+      // 🚫 한 번이라도 틀린 적 있는 셀은 everWrongCells에 영구 기록
+      if (!everWrongCellsRef.current.has(cellKey)) {
+        setEverWrongCells(prev => {
+          const newSet = new Set(prev);
+          newSet.add(cellKey);
+          return newSet;
+        });
+        // 🔻 첫 번째 오답만 -30점 감점
+        setScore(s => Math.max(0, s - 30));
+      }
     }
 
-    // 🗺️ 미니맵 갱신 (색칠할 때마다)
-    updateMinimapImage();
-  }, [undoMode, updateMinimapImage]);
+    // 🗺️ 미니맵 갱신 제거 - filledCells.size 변경 시 useEffect에서 처리
+  }, [undoMode]);
 
   // 색상 선택 핸들러 (⚡ 최적화: 로그 제거)
   const handleColorSelect = useCallback((color) => {
@@ -779,9 +894,12 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   }, [actualColors]);
 
   // 🎨 완료된 색상 계산 (디바운스로 성능 최적화)
-  // ⚡ 색칠 시마다 즉시 계산하면 딜레이 발생 → 500ms 디바운스
+  // ⚡ 색칠 시마다 즉시 계산하면 딜레이 발생 → 2000ms 디바운스 + InteractionManager
   const [completedColors, setCompletedColors] = useState(new Set());
   const completedColorsTimerRef = useRef(null);
+  // ⚡ 캐시: 라벨별 칠해진 셀 개수 (증분 업데이트용)
+  const filledCountsCacheRef = useRef({});
+  const lastFilledSizeRef = useRef(0);
 
   useEffect(() => {
     if (cells.length === 0 || Object.keys(colorCellCounts).length === 0) {
@@ -793,36 +911,46 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       clearTimeout(completedColorsTimerRef.current);
     }
 
-    // 500ms 디바운스로 완료 색상 계산 (색칠 성능에 영향 없음)
+    // ⚡ 2000ms 디바운스 (더 긴 간격으로 CPU 사용 감소)
     completedColorsTimerRef.current = setTimeout(() => {
-      // 정답으로 칠해진 셀만 카운트 (wrongCells 제외)
-      const correctFilledCells = new Set(
-        [...filledCells].filter(cellKey => !wrongCells.has(cellKey))
-      );
+      // ⚡ InteractionManager로 터치 이벤트 처리 후 실행
+      InteractionManager.runAfterInteractions(() => {
+        const currentSize = filledCells.size;
+        const lastSize = lastFilledSizeRef.current;
 
-      // 각 색상별 정답 칠해진 개수 계산
-      const filledCounts = {};
-      for (const cellKey of correctFilledCells) {
-        const [row, col] = cellKey.split('-').map(Number);
-        const idx = row * gridSize + col;
-        const cell = cells[idx];
-        if (cell) {
-          const label = cell.label;
-          filledCounts[label] = (filledCounts[label] || 0) + 1;
+        // ⚡ 변경 없으면 스킵
+        if (currentSize === lastSize && wrongCells.size === 0) {
+          return;
         }
-      }
 
-      // 완료된 색상 판별 (전체 셀 개수 == 칠해진 셀 개수)
-      const completed = new Set();
-      for (const [label, totalCount] of Object.entries(colorCellCounts)) {
-        const filledCount = filledCounts[label] || 0;
-        if (filledCount >= totalCount) {
-          completed.add(label);
+        // ⚡ 전체 재계산 (2000ms마다만 실행되므로 괜찮음)
+        const filledCounts = {};
+        for (const cellKey of filledCells) {
+          if (wrongCells.has(cellKey)) continue; // 틀린 셀 제외
+          const dashIdx = cellKey.indexOf('-');
+          if (dashIdx === -1) continue;
+          const row = parseInt(cellKey.substring(0, dashIdx), 10);
+          const col = parseInt(cellKey.substring(dashIdx + 1), 10);
+          const idx = row * gridSize + col;
+          const cell = cells[idx];
+          if (cell) {
+            filledCounts[cell.label] = (filledCounts[cell.label] || 0) + 1;
+          }
         }
-      }
 
-      setCompletedColors(completed);
-    }, 500);
+        // 완료된 색상 판별
+        const completed = new Set();
+        for (const label in colorCellCounts) {
+          if (filledCounts[label] >= colorCellCounts[label]) {
+            completed.add(label);
+          }
+        }
+
+        filledCountsCacheRef.current = filledCounts;
+        lastFilledSizeRef.current = currentSize;
+        setCompletedColors(completed);
+      });
+    }, 2000); // ⚡ 1000ms → 2000ms
 
     return () => {
       if (completedColorsTimerRef.current) {
@@ -830,6 +958,60 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       }
     };
   }, [cells, colorCellCounts, filledCells.size, wrongCells.size, gridSize]);
+
+  // 🎯 남은 셀 계산 (100개 이하일 때 힌트 표시용)
+  // ⚡ 최적화: 힌트 패널이 열려있을 때만 상세 계산
+  const remainingCellsInfo = useMemo(() => {
+    if (!cells || cells.length === 0) return { count: 0, cells: [] };
+
+    const totalCells = gridSize * gridSize;
+    // ⚡ 정답 셀 개수 = filledCells - wrongCells
+    const correctCount = filledCells.size - wrongCells.size;
+    const remainingCount = totalCells - correctCount;
+
+    // ⚡ 100개 초과면 빠른 반환 (상세 계산 스킵)
+    if (remainingCount > 100 || !showRemainingHint) {
+      return { count: remainingCount, cells: [] };
+    }
+
+    // ⚡ 힌트 패널 열렸을 때만 상세 목록 생성
+    // correctFilledCells Set 생성
+    const correctFilledCells = new Set();
+    for (const cellKey of filledCells) {
+      if (!wrongCells.has(cellKey)) {
+        correctFilledCells.add(cellKey);
+      }
+    }
+
+    // 남은 셀 목록 생성 (100개 이하)
+    const remainingList = [];
+    for (let idx = 0; idx < cells.length && remainingList.length < 100; idx++) {
+      const cell = cells[idx];
+      const cellKey = `${cell.row}-${cell.col}`;
+      if (!correctFilledCells.has(cellKey)) {
+        remainingList.push({
+          row: cell.row,
+          col: cell.col,
+          label: cell.label,
+          hex: cell.targetColorHex
+        });
+      }
+    }
+
+    // 색상별로 그룹화하여 정렬
+    remainingList.sort((a, b) => a.label.localeCompare(b.label));
+
+    return { count: remainingCount, cells: remainingList };
+  }, [cells, filledCells, wrongCells, gridSize, showRemainingHint]);
+
+  // 🎯 남은 셀 위치로 이동
+  const handleMoveToCell = useCallback((row, col) => {
+    // Native 캔버스의 setViewportPosition 호출
+    const normalizedX = col / gridSize;
+    const normalizedY = row / gridSize;
+    setViewportPosition(normalizedX, normalizedY, 4.0); // 4배 줌으로 이동
+    setShowRemainingHint(false);
+  }, [gridSize]);
 
   // 색상 팔레트 렌더링 (⚡ 최적화: memo된 ColorButton 사용)
   const renderPalette = useCallback(() => {
@@ -939,12 +1121,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               selectedColorHex={selectedColor?.hex || '#FFFFFF'}
               selectedLabel={selectedColor?.id || 'A'}
               imageUri={imageUri}
+              textureUri={textureUri}
               gameId={gameId}
               filledCells={filledCellsArray}
               wrongCells={wrongCellsArray}
               undoMode={undoMode}
               viewSize={viewDimensions}
               completionMode={completionMode}
+              clearProgress={isReset || false}
               onCellPainted={handleCellPainted}
               onCanvasReady={handleCanvasReady}
               onDebugLog={handleDebugLog}
@@ -997,6 +1181,16 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           </View>
         </View>
 
+        {/* 🎯 남은 셀 힌트 버튼 (100개 이하일 때만 표시) */}
+        {remainingCellsInfo.count > 0 && remainingCellsInfo.count <= 100 && (
+          <TouchableOpacity
+            style={[styles.hintButton, showRemainingHint && styles.hintButtonActive]}
+            onPress={() => setShowRemainingHint(!showRemainingHint)}
+          >
+            <Text style={styles.hintButtonText}>🎯{remainingCellsInfo.count}</Text>
+          </TouchableOpacity>
+        )}
+
         {/* 🗺️ 미니맵 토글 버튼 */}
         <TouchableOpacity
           style={[styles.minimapToggle, showMinimap && styles.minimapToggleActive]}
@@ -1018,12 +1212,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             selectedColorHex={selectedColor?.hex || '#FFFFFF'}
             selectedLabel={selectedColor?.id || 'A'}
             imageUri={imageUri}
+            textureUri={textureUri}
             gameId={gameId}
             filledCells={filledCellsArray}
             wrongCells={wrongCellsArray}
             undoMode={undoMode}
             viewSize={viewDimensions}
             completionMode={completionMode}
+            clearProgress={isReset || false}
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
             onDebugLog={handleDebugLog}
@@ -1084,6 +1280,28 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                   />
                 );
               })}
+              {/* 🎯 남은 셀 100개 이하일 때 초록 점 표시 */}
+              {remainingCellsInfo.cells.length > 0 && remainingCellsInfo.cells.map((cell) => {
+                const minimapSize = 120;
+                const cellSize = minimapSize / gridSize;
+                return (
+                  <View
+                    key={`remaining-${cell.row}-${cell.col}`}
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: cell.col * cellSize + cellSize / 2 - 3,
+                      top: cell.row * cellSize + cellSize / 2 - 3,
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: '#00FF00',
+                      borderWidth: 1,
+                      borderColor: '#008800',
+                    }}
+                  />
+                );
+              })}
               {/* 현재 뷰포트 위치 표시 박스 */}
               <View
                 style={[
@@ -1102,10 +1320,47 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                 <Text style={styles.minimapLabel}>
                   {wrongCells.size > 0
                     ? `⚠️ ${wrongCells.size}개 오류`
-                    : t('play.currentPosition')}
+                    : remainingCellsInfo.cells.length > 0
+                      ? `🎯 ${remainingCellsInfo.count}개 남음`
+                      : t('play.currentPosition')}
                 </Text>
               </View>
             </TouchableOpacity>
+          )}
+
+          {/* 🎯 남은 셀 힌트 패널 */}
+          {showRemainingHint && remainingCellsInfo.cells.length > 0 && (
+            <View style={styles.hintPanel}>
+              <View style={styles.hintPanelHeader}>
+                <Text style={styles.hintPanelTitle}>
+                  🎯 {t('play.remainingCells', { count: remainingCellsInfo.count })}
+                </Text>
+                <TouchableOpacity onPress={() => setShowRemainingHint(false)}>
+                  <Text style={styles.hintPanelClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.hintPanelScroll} showsVerticalScrollIndicator={true}>
+                {remainingCellsInfo.cells.map((cell, index) => (
+                  <TouchableOpacity
+                    key={`${cell.row}-${cell.col}`}
+                    style={styles.hintCellItem}
+                    onPress={() => handleMoveToCell(cell.row, cell.col)}
+                  >
+                    <View style={[styles.hintCellColor, { backgroundColor: cell.hex }]}>
+                      <Text style={[
+                        styles.hintCellLabel,
+                        { color: getLuminance(cell.hex) > 128 ? '#000' : '#FFF' }
+                      ]}>
+                        {cell.label}
+                      </Text>
+                    </View>
+                    <Text style={styles.hintCellPosition}>
+                      ({cell.row + 1}, {cell.col + 1})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           )}
           </>
         )}
@@ -1128,8 +1383,9 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       )}
 
       {/* 🚀 로딩 오버레이 - Native 캔버스의 첫 렌더링 완료까지 표시 */}
+      {/* ⚡ pointerEvents="none"으로 터치가 캔버스로 전달되도록 함 (로딩 중에도 조작 가능) */}
       {!isNativeReady && (
-        <View style={styles.loadingOverlay}>
+        <View style={styles.loadingOverlay} pointerEvents="none">
           <StatusBar barStyle="light-content" backgroundColor="#000000" translucent />
           <Image
             source={loadingImage}
@@ -1568,5 +1824,90 @@ const styles = StyleSheet.create({
     backgroundColor: SpotifyColors.background,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  // 🎯 남은 셀 힌트 스타일
+  hintButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderWidth: 1,
+    borderColor: SpotifyColors.divider,
+    marginRight: 8,
+  },
+  hintButtonActive: {
+    backgroundColor: SpotifyColors.primary,
+    borderColor: SpotifyColors.primary,
+  },
+  hintButtonText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  hintPanel: {
+    position: 'absolute',
+    right: 12,
+    top: 60,
+    width: 160,
+    maxHeight: 300,
+    borderRadius: SpotifyRadius.md,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderWidth: 1,
+    borderColor: SpotifyColors.divider,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 10,
+    overflow: 'hidden',
+  },
+  hintPanelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: SpotifyColors.divider,
+    backgroundColor: SpotifyColors.background,
+  },
+  hintPanelTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  hintPanelClose: {
+    fontSize: 18,
+    color: SpotifyColors.textSecondary,
+    paddingHorizontal: 4,
+  },
+  hintPanelScroll: {
+    maxHeight: 250,
+  },
+  hintCellItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: SpotifyColors.divider,
+  },
+  hintCellColor: {
+    width: 28,
+    height: 28,
+    borderRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  hintCellLabel: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  hintCellPosition: {
+    fontSize: 12,
+    color: SpotifyColors.textSecondary,
   },
 });

@@ -77,6 +77,14 @@ export default {
     processing: '퍼즐 생성 중...',
     analyzeColors: '색상 분석 중...',
     initializing: '초기화 중...',
+    // 로딩 단계별 메시지
+    stepPreparing: '준비 중...',
+    stepThumbnail: '미리보기 생성 중...',
+    stepResize: '이미지 최적화 중...',
+    stepSaving: '파일 저장 중...',
+    stepAnalyzing: '색상 분석 중...',
+    stepWeave: '위빙 텍스처 생성 중...',
+    stepFinishing: '저장 완료 중...',
     tapToSelect: '탭하여 선택',
     changeImage: '이미지 변경',
     permissionRequired: '권한 필요',
@@ -89,16 +97,19 @@ export default {
     gridAppliedMessage: '이미지가 저장되었습니다. 갤러리에서 확인하세요.',
     saveFailed: '저장 실패',
     saveFailedMessage: '이미지 저장 중 오류가 발생했습니다.',
+    pointsRequired: '포인트 필요',
+    pointsShortfall: '포인트가 부족합니다.\n\n필요: {{cost}}P\n보유: {{current}}P\n부족: {{shortfall}}P\n\n더 많은 퍼즐을 색칠하여 포인트를 획득하세요!',
   },
 
   // 플레이 화면
   play: {
     preparing: '캔버스 준비 중...',
     completeTitle: '🎉 축하합니다!',
-    completeMessage: '퍼즐을 완성했습니다!\n갤러리에서 작품을 확인하세요.',
+    completeMessage: '퍼즐을 완성했습니다!\n\n점수 달성률: {{percent}}%\n보상: +{{reward}}P\n\n갤러리에서 작품을 확인하세요.',
     undo: '되돌리기',
     wrongCells: '{{count}}개',
     currentPosition: '현재 위치',
+    remainingCells: '남은 셀 {{count}}개',
   },
 
   // 설정 화면

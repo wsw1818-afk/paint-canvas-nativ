@@ -6,6 +6,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { showPuzzleSelectAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
+import TexturePickerModal from '../components/TexturePickerModal';
+import { TEXTURES } from '../utils/textureStorage';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
@@ -13,6 +15,10 @@ export default function GalleryScreen({ navigation }) {
   const [ready, setReady] = useState(false);  // 화면 전환 완료 여부
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [, forceUpdate] = useState(0);
+
+  // 🎨 텍스처 선택 모달 상태
+  const [showTextureModal, setShowTextureModal] = useState(false);
+  const [pendingPuzzle, setPendingPuzzle] = useState(null);  // 텍스처 선택 후 시작할 퍼즐
 
   // 🌐 언어 변경 리스너
   useEffect(() => {
@@ -100,18 +106,24 @@ export default function GalleryScreen({ navigation }) {
               // 퍼즐 진행 상황 초기화
               await updatePuzzle(puzzle.id, {
                 progress: 0,
+                completed: false,
+                completedAt: null,
+                completedImageUri: null,
+                progressThumbnailUri: null,
                 lastPlayed: new Date().toISOString()
               });
 
-              // AsyncStorage의 게임 데이터 삭제
-              const imageUri = puzzle.imageUri || puzzle.imageBase64;
-              const gameId = `game_${imageUri.split('/').pop()}_${puzzle.gridSize}_${puzzle.colorCount}`;
+              // 🔄 AsyncStorage의 게임 데이터 삭제 (PlayScreen에서 사용하는 키)
+              const gameId = `puzzle_progress_${puzzle.id}`;
               await AsyncStorage.removeItem(gameId);
+              console.log('[GalleryScreen] 🗑️ AsyncStorage 삭제:', gameId);
 
               // 목록 새로고침
               await loadSavedPuzzles();
 
-              Alert.alert(t('common.success'), t('gallery.resetSuccess'));
+              // 🎨 텍스처 선택 모달 표시 (새로 시작)
+              setPendingPuzzle(puzzle);
+              setShowTextureModal(true);
             } catch (error) {
               console.error('퍼즐 초기화 실패:', error);
               Alert.alert(t('common.error'), t('gallery.resetFailed'));
@@ -122,6 +134,62 @@ export default function GalleryScreen({ navigation }) {
     );
   };
 
+  // 🎨 텍스처 선택 완료 핸들러
+  const handleTextureSelect = useCallback((texture) => {
+    console.log('[GalleryScreen] 🎨 handleTextureSelect 호출됨:', JSON.stringify({
+      textureId: texture?.id,
+      textureName: texture?.name,
+      hasImage: !!texture?.image
+    }));
+
+    setShowTextureModal(false);
+    if (pendingPuzzle) {
+      // 🎨 갤러리 리셋 시: 항상 WEAVE 모드 (기본 텍스처 또는 사용자 선택 텍스처)
+      // - 텍스처 '없음' 선택 → WEAVE + textureUri=null (Native 기본 텍스처 사용)
+      // - 텍스처 선택 → WEAVE + textureUri (사용자 선택 텍스처 사용)
+      // ※ 원본 이미지 모드(ORIGINAL)는 새 퍼즐 만들기에서만 선택 가능
+      const completionMode = 'WEAVE';
+
+      // 텍스처 URI 변환 (사용자가 텍스처를 선택한 경우에만)
+      let textureUri = null;
+      const hasUserTexture = texture && texture.id !== 'none' && texture.image;
+      if (hasUserTexture) {
+        const resolved = Image.resolveAssetSource(texture.image);
+        console.log('[GalleryScreen] 🔍 resolveAssetSource 결과:', JSON.stringify(resolved));
+        textureUri = resolved?.uri || null;
+      }
+
+      console.log('[GalleryScreen] 🎨 최종 파라미터:', JSON.stringify({
+        completionMode,
+        textureUri,
+        puzzleId: pendingPuzzle?.id
+      }));
+
+      // 🎨 퍼즐 데이터에 텍스처 정보 저장 (다음에 이어할 때 사용)
+      // textureSelected: true → 최초 텍스처 선택 완료 표시 (다음부터 모달 안 뜸)
+      updatePuzzle(pendingPuzzle.id, {
+        completionMode: completionMode,
+        textureUri: textureUri,
+        textureSelected: true  // 🎨 최초 텍스처 선택 완료 플래그
+      }).catch(err => console.error('[GalleryScreen] ❌ 텍스처 정보 저장 실패:', err));
+
+      showPuzzleSelectAd(() => {
+        navigation.navigate('Play', {
+          puzzleId: pendingPuzzle.id,
+          imageUri: pendingPuzzle.imageUri || pendingPuzzle.imageBase64,
+          colorCount: pendingPuzzle.colorCount,
+          gridSize: pendingPuzzle.gridSize,
+          gridColors: pendingPuzzle.gridColors,
+          dominantColors: pendingPuzzle.dominantColors,
+          completionMode: completionMode,
+          textureUri: textureUri,
+          isReset: true  // 🗑️ 리셋 플래그 (Native SharedPreferences 초기화)
+        });
+      });
+      setPendingPuzzle(null);
+    }
+  }, [pendingPuzzle, navigation]);
+
   const getDifficultyInfo = (colors, gridSize) => {
     // 난이도 판별: 색상 수 + 격자 크기로 구분
     if (colors <= 16) return { name: t('gallery.difficultyEasy'), color: SpotifyColors.primary };      // 16색 이하 = 쉬움
@@ -131,6 +199,21 @@ export default function GalleryScreen({ navigation }) {
 
   // 📢 퍼즐 선택 핸들러 (3회마다 전면 광고)
   const handlePuzzleSelect = useCallback((puzzle, completionMode) => {
+    // 🎨 최초 실행 시 텍스처 선택 모달 표시 (textureSelected 플래그로 판단)
+    // - textureSelected가 없거나 false면 최초 실행 → 텍스처 선택 모달
+    // - textureSelected가 true면 이미 선택됨 → 바로 플레이
+    // ※ 초기화(리셋) 시에는 handleResetPuzzle에서 별도 처리
+    if (!puzzle.textureSelected) {
+      console.log('[GalleryScreen] 🎨 최초 실행 - 텍스처 선택 모달 표시:', puzzle.id);
+      setPendingPuzzle(puzzle);
+      setShowTextureModal(true);
+      return;
+    }
+
+    // 🎨 저장된 textureUri 사용 (리셋 없이 이어하기)
+    const textureUri = puzzle.textureUri || null;
+    console.log('[GalleryScreen] 📌 퍼즐 선택:', puzzle.id, 'completionMode:', completionMode, 'textureUri:', textureUri);
+
     showPuzzleSelectAd(() => {
       navigation.navigate('Play', {
         puzzleId: puzzle.id,
@@ -139,7 +222,8 @@ export default function GalleryScreen({ navigation }) {
         gridSize: puzzle.gridSize,
         gridColors: puzzle.gridColors,
         dominantColors: puzzle.dominantColors,
-        completionMode: completionMode
+        completionMode: completionMode,
+        textureUri: textureUri
       });
     });
   }, [navigation]);
@@ -264,6 +348,17 @@ export default function GalleryScreen({ navigation }) {
         )}
           </ScrollView>
       </SafeAreaView>
+
+      {/* 🎨 텍스처 선택 모달 */}
+      <TexturePickerModal
+        visible={showTextureModal}
+        onClose={() => {
+          // X 버튼으로 닫을 때: 모달만 닫고 아무것도 안 함 (취소)
+          setShowTextureModal(false);
+          setPendingPuzzle(null);
+        }}
+        onSelect={handleTextureSelect}
+      />
     </View>
   );
 }
