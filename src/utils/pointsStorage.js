@@ -6,7 +6,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const POINTS_KEY = '@points';
-const INITIAL_POINTS = 30000; // 초기 포인트 (기본 퍼즐 2개 생성 가능)
+const INITIAL_POINTS = 1000000; // 초기 포인트 (테스트용 100만)
 
 /**
  * 현재 포인트 가져오기

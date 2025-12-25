@@ -40,26 +40,38 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // 🚀 초기화 완료 상태 추적
     private var isImageLoaded = false
+    private var isTextureApplied = false  // 🎨 텍스처 적용 완료 여부
     private var isProgressLoaded = false
     private var hasNotifiedReady = false
+    private var loadingStartTime = 0L  // ⏱️ 로딩 시작 시간 (최소 로딩 시간 보장)
 
     /**
      * 🚀 첫 번째 성공적인 렌더링 완료 시 JS에 알림
      * onDraw에서 실제 캔버스가 그려진 후 호출됨
-     * ⚡ 성능 개선: 이미지 로딩 완료 시 바로 알림 (진행 상황 복원은 백그라운드에서 계속)
-     * → 로딩 오버레이가 빨리 사라져서 터치 응답이 빠름
+     * ⚡ 개선: 이미지 + 텍스처 완료 + 최소 100ms 대기 (500ms→100ms)
+     * → 터치 응답성 향상
      */
     private fun notifyCanvasReady() {
-        // ⚡ 이미지 로딩 완료되면 바로 알림 (진행 상황 복원 대기 안 함)
-        // 진행 상황 복원은 백그라운드에서 계속되고, 화면에 자연스럽게 반영됨
-        if (!isImageLoaded) return
+        // 이미지 로딩 완료 + 텍스처 적용 완료 시에만 알림
+        if (!isImageLoaded || !isTextureApplied) return
 
         if (!hasNotifiedReady) {
+            // ⏱️ 최소 로딩 시간 보장 (100ms) - 500ms에서 단축
+            val elapsed = System.currentTimeMillis() - loadingStartTime
+            val minLoadingTime = 100L
+            if (elapsed < minLoadingTime) {
+                // 최소 시간이 지나지 않았으면 나중에 다시 시도
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    notifyCanvasReady()
+                }, minLoadingTime - elapsed)
+                return
+            }
+
             hasNotifiedReady = true
             sendLog("PaintCanvas", "╔════════════════════════════════════════╗")
-            sendLog("PaintCanvas", "║ 🚀 Canvas Ready! 이미지 로딩 완료       ║")
+            sendLog("PaintCanvas", "║ 🚀 Canvas Ready! 이미지+텍스처 완료     ║")
             sendLog("PaintCanvas", "║ filled=${filledCells.size}, wrong=${wrongPaintedCells.size}")
-            sendLog("PaintCanvas", "║ maxZoom=$maxZoom, gridSize=$gridSize")
+            sendLog("PaintCanvas", "║ maxZoom=$maxZoom, gridSize=$gridSize, elapsed=${elapsed}ms")
             sendLog("PaintCanvas", "╚════════════════════════════════════════╝")
             onCanvasReady(mapOf(
                 "ready" to true,
@@ -220,8 +232,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         hasUserPainted = false  // ✅ 새 퍼즐이면 사용자 색칠 플래그 리셋
         // 🚀 초기화 상태 플래그 리셋 (새 퍼즐이므로 다시 로딩 필요)
         isImageLoaded = false
+        isTextureApplied = false  // 🎨 텍스처 적용 상태 리셋
         isProgressLoaded = false
         hasNotifiedReady = false
+        loadingStartTime = System.currentTimeMillis()  // ⏱️ 로딩 시작 시간 기록
         filledCells.clear()
         filledCellIndices.clear()
         wrongPaintedCells.clear()
@@ -541,12 +555,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // ⚡ 텍스처 지연 적용 (로딩 완료 후 백그라운드에서)
     private fun applyTextureInBackground(bitmap: Bitmap?) {
-        if (bitmap == null || bitmap.isRecycled) return
+        if (bitmap == null || bitmap.isRecycled) {
+            // 🎨 텍스처 없이 완료 처리
+            isTextureApplied = true
+            notifyCanvasReady()
+            return
+        }
 
         // 🎨 사용자 선택 텍스처가 있으면 우선 사용, 없으면 기본 텍스처
         val pattern = textureBitmap ?: filledCellPatternBitmap
         if (pattern == null || pattern.isRecycled) {
             android.util.Log.d("PaintCanvas", "⚡ 텍스처 없음, 원본 이미지 유지")
+            // 🎨 텍스처 없이 완료 처리
+            isTextureApplied = true
+            notifyCanvasReady()
             return
         }
 
@@ -556,12 +578,19 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 withContext(Dispatchers.Main) {
                     if (!textured.isRecycled) {
                         backgroundBitmap = textured
+                        isTextureApplied = true  // 🎨 텍스처 적용 완료
                         invalidate()
                         android.util.Log.d("PaintCanvas", "🎨 텍스처 적용 완료 (사용자 선택: ${textureBitmap != null})")
+                        notifyCanvasReady()  // 🚀 ready 이벤트 발생
                     }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("PaintCanvas", "❌ 텍스처 적용 오류: ${e.message}")
+                // 에러 시에도 완료 처리 (사용자가 대기하지 않도록)
+                withContext(Dispatchers.Main) {
+                    isTextureApplied = true
+                    notifyCanvasReady()
+                }
             }
         }
     }
@@ -1165,6 +1194,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 셀이 화면에서 너무 작으면 텍스트가 안 보이므로 그리기 스킵
         val screenCellSize = cellSize * scaleFactor
         val shouldDrawText = screenCellSize > 12f  // 12dp 이상일 때만
+
+        // ⚡ 텍스처 표시 여부 미리 계산 (매 셀마다 계산 방지)
+        cachedZoomRatio = scaleFactor / maxZoom
+        val hasUserTexture = textureBitmap != null && !textureBitmap!!.isRecycled
+        val textureThreshold = if (isLargeGridMode) 0.4f else TEXTURE_VISIBLE_ZOOM_THRESHOLD
+        cachedShouldShowTexture = hasUserTexture || cachedZoomRatio >= textureThreshold
 
         // 텍스트 크기 미리 계산 (텍스트 그릴 때만)
         val textYOffset = if (shouldDrawText) {
@@ -2033,6 +2068,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var baseTextureShader: BitmapShader? = null
     private val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
+    // ⚡ 최적화: 마지막으로 계산한 텍스처 표시 여부 캐시 (onDraw 시작 시 한 번만 계산)
+    private var cachedShouldShowTexture = false
+    private var cachedZoomRatio = 0f
+
     private fun drawFilledCellWithTexture(canvas: Canvas, left: Float, top: Float, size: Float, color: Int) {
         try {
             // ✨ 완성 모드에 따라 다른 렌더링 적용
@@ -2042,25 +2081,17 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 return
             }
 
-            // ⚡ 줌 기반 텍스처 최적화: 줌 레벨이 임계값 미만이면 단색만 표시
-            // scaleFactor / maxZoom = 현재 줌 비율 (0.0 ~ 1.0)
-            // 예: maxZoom=10, scaleFactor=8 → 80% 줌
-            val zoomRatio = scaleFactor / maxZoom
+            // ⚡ 최적화: 캐시된 값 사용 (매 셀마다 계산 방지)
+            // cachedShouldShowTexture는 onDraw 시작 시 한 번만 계산됨
+            if (!cachedShouldShowTexture) {
+                reusableBgPaint.color = color
+                canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
+                return
+            }
 
             // WEAVE 모드: PorterDuff MULTIPLY 방식 (캐시 없음, OOM 방지)
-            // 🎨 사용자 선택 텍스처 우선, 없으면 기본 텍스처 사용
             val pattern = textureBitmap ?: filledCellPatternBitmap
-
-            // 🎨 사용자가 텍스처를 선택했으면 줌 레벨과 무관하게 항상 표시
-            val hasUserTexture = textureBitmap != null && !textureBitmap!!.isRecycled
-
-            // ⚡ 대형 그리드(>=100) 추가 최적화: 40% 줌 미만에서 텍스처 완전 스킵 (사용자 텍스처 제외)
-            // 100+ 그리드는 셀이 매우 작아서 텍스처가 거의 안 보임 → 렌더링 낭비 방지
-            val textureThreshold = if (isLargeGridMode) 0.4f else TEXTURE_VISIBLE_ZOOM_THRESHOLD
-            val shouldShowTexture = hasUserTexture || zoomRatio >= textureThreshold
-
-            // ⚡ 텍스처 비활성화 조건: 패턴 없음/손상 (줌은 이미 위에서 체크)
-            if (!shouldShowTexture || pattern == null || pattern.isRecycled) {
+            if (pattern == null || pattern.isRecycled) {
                 reusableBgPaint.color = color
                 canvas.drawRect(left, top, left + size + 0.5f, top + size + 0.5f, reusableBgPaint)
                 return
