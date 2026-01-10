@@ -113,7 +113,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private var lastInvalidateTime = 0L
     private var pendingInvalidate = false
     private val invalidateHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val MIN_INVALIDATE_INTERVAL = 16L  // 최소 16ms 간격 (~60fps)
+    private val MIN_INVALIDATE_INTERVAL = 8L  // 최소 8ms 간격 (~120fps, 더 부드러운 색칠)
 
     /**
      * 스로틀링된 invalidate() - 빠른 연속 호출 방지
@@ -1677,11 +1677,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (batchEventRunnable != null) return
 
-        // ⚡ 100ms 후 JS 이벤트 배치 전송
+        // ⚡ 30ms 후 JS 이벤트 배치 전송 (100ms→50ms→30ms 개선)
         batchEventRunnable = Runnable {
             flushPendingEventsWithColor()
         }
-        postDelayed(batchEventRunnable, 100)
+        postDelayed(batchEventRunnable, 30)
     }
 
     private fun flushPendingEventsWithColor() {
@@ -1728,11 +1728,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (eraseEventRunnable != null) return
 
-        // ⚡ 50ms 후 JS 이벤트 배치 전송 (X 제거는 빠른 피드백 필요)
+        // ⚡ 30ms 후 JS 이벤트 배치 전송 (X 제거는 빠른 피드백 필요)
         eraseEventRunnable = Runnable {
             flushEraseEvents()
         }
-        postDelayed(eraseEventRunnable, 50)
+        postDelayed(eraseEventRunnable, 30)
     }
 
     // ⚡ X 제거 이벤트 즉시 처리
@@ -2997,7 +2997,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     // ⚡ 저장 디바운스용 핸들러
     private var saveProgressRunnable: Runnable? = null
     private val saveHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val SAVE_DEBOUNCE_MS = 500L  // 500ms 디바운스
+    private val SAVE_DEBOUNCE_MS = 1000L  // 1000ms 디바운스 (500ms→1000ms 개선, I/O 부하 감소)
 
     /**
      * ⚡ 진행 상황을 SharedPreferences에 비동기 저장 (UI 블로킹 방지)
