@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const TEXTURE_KEY = '@selected_texture';
 
 // 사용 가능한 텍스처 목록 (static require로 번들에 포함)
-// 동물 15개 + 꽃 15개 + 과일 15개 + 니트 15개 = 총 60개 텍스처
+// 동물 15개 + 꽃 15개 + 과일 15개 = 총 45개 텍스처
 export const TEXTURES = [
   { id: 'none', name: '없음', image: null },
   // ===== 동물 텍스처 (15개) =====
@@ -58,22 +58,6 @@ export const TEXTURES = [
   { id: 'blueberries', name: '블루베리', image: require('../../assets/textures/fruit_13_blueberries.png') },
   { id: 'mango', name: '망고', image: require('../../assets/textures/fruit_14_mango.png') },
   { id: 'pomegranate', name: '석류', image: require('../../assets/textures/fruit_15_pomegranate.png') },
-  // ===== 니트 오브젝트 텍스처 (15개) =====
-  { id: 'knit01', name: '니트1', image: require('../../assets/textures/knit_obj_01.png') },
-  { id: 'knit02', name: '니트2', image: require('../../assets/textures/knit_obj_02.png') },
-  { id: 'knit03', name: '니트3', image: require('../../assets/textures/knit_obj_03.png') },
-  { id: 'knit04', name: '니트4', image: require('../../assets/textures/knit_obj_04.png') },
-  { id: 'knit05', name: '니트5', image: require('../../assets/textures/knit_obj_05.png') },
-  { id: 'knit06', name: '니트6', image: require('../../assets/textures/knit_obj_06.png') },
-  { id: 'knit07', name: '니트7', image: require('../../assets/textures/knit_obj_07.png') },
-  { id: 'knit08', name: '니트8', image: require('../../assets/textures/knit_obj_08.png') },
-  { id: 'knit09', name: '니트9', image: require('../../assets/textures/knit_obj_09.png') },
-  { id: 'knit10', name: '니트10', image: require('../../assets/textures/knit_obj_10.png') },
-  { id: 'knit11', name: '니트11', image: require('../../assets/textures/knit_obj_11.png') },
-  { id: 'knit12', name: '니트12', image: require('../../assets/textures/knit_obj_12.png') },
-  { id: 'knit13', name: '니트13', image: require('../../assets/textures/knit_obj_13.png') },
-  { id: 'knit14', name: '니트14', image: require('../../assets/textures/knit_obj_14.png') },
-  { id: 'knit15', name: '니트15', image: require('../../assets/textures/knit_obj_15.png') },
 ];
 
 /**
