@@ -314,6 +314,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [isCellsReady, setIsCellsReady] = useState(false);
   // 🎨 각 색상별 전체 셀 개수 (라벨 → 개수)
   const [colorCellCounts, setColorCellCounts] = useState({});
+  const colorCellCountsRef = useRef({});  // 🐛 saveProgress에서 접근용 Ref
 
   useEffect(() => {
     if (actualColors.length === 0) return;
@@ -366,6 +367,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
       setCells(cellList);
       setColorCellCounts(cellCounts);
+      colorCellCountsRef.current = cellCounts;  // 🐛 Ref 동기화
       setIsCellsReady(true);
     });
 
@@ -582,9 +584,15 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
           // 퍼즐 완성도 업데이트 (puzzleStorage에 저장)
           if (puzzleId) {
+            // 🐛 버그 수정: gridSize * gridSize = 실제 색칠 대상 셀 수 (모든 셀이 색칠 대상)
             const totalCells = gridSize * gridSize;
             const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
             const progress = Math.max(0, Math.min(100, (correctCells / totalCells) * 100));
+
+            // 🔍 디버그: 진행률 계산 값 확인 (조건부로 최적화)
+            if (__DEV__) {
+              console.log(`[진행률] filled=${filledCellsRef.current.size}, wrong=${wrongCellsRef.current.size}, correct=${correctCells}, total=${totalCells}, progress=${progress.toFixed(1)}%`);
+            }
 
             await updatePuzzle(puzzleId, {
               progress: progress,
@@ -932,29 +940,20 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     completedColorsTimerRef.current = setTimeout(() => {
       // ⚡ InteractionManager로 터치 이벤트 처리 후 실행
       InteractionManager.runAfterInteractions(() => {
-        // ⚡ 증분 업데이트: 캐시된 값에서 시작
-        const filledCounts = { ...filledCountsCacheRef.current };
-        const lastSize = lastFilledSizeRef.current;
-
-        // ⚡ 새로 추가된 셀만 처리 (전체 재계산 방지)
-        // 셀 삭제(wrongCells 변경)가 있으면 전체 재계산
-        if (currentWrongSize !== lastWrongSizeRef.current) {
-          // 틀린 셀 변경 시 전체 재계산
-          Object.keys(filledCounts).forEach(k => filledCounts[k] = 0);
-          for (const cellKey of filledCells) {
-            if (wrongCells.has(cellKey)) continue;
-            const dashIdx = cellKey.indexOf('-');
-            if (dashIdx === -1) continue;
-            const row = parseInt(cellKey.substring(0, dashIdx), 10);
-            const col = parseInt(cellKey.substring(dashIdx + 1), 10);
-            const idx = row * gridSize + col;
-            const cell = cells[idx];
-            if (cell) {
-              filledCounts[cell.label] = (filledCounts[cell.label] || 0) + 1;
-            }
+        // 🐛 버그 수정: 항상 전체 재계산 (증분 처리 버그로 완료 표시 안됨 문제 해결)
+        const filledCounts = {};
+        for (const cellKey of filledCells) {
+          if (wrongCells.has(cellKey)) continue;
+          const dashIdx = cellKey.indexOf('-');
+          if (dashIdx === -1) continue;
+          const row = parseInt(cellKey.substring(0, dashIdx), 10);
+          const col = parseInt(cellKey.substring(dashIdx + 1), 10);
+          const idx = row * gridSize + col;
+          const cell = cells[idx];
+          if (cell) {
+            filledCounts[cell.label] = (filledCounts[cell.label] || 0) + 1;
           }
         }
-        // 새로 추가된 셀만 증분 처리는 복잡도 대비 이득이 적어 생략
 
         // 완료된 색상 판별
         const completed = new Set();

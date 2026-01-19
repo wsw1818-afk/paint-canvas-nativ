@@ -1,1 +1,1 @@
-⚡ 성능 최적화 + 테스트 포인트 100만 설정
+🐛 갤러리 크래시 수정 (useFocusEffect → navigation.addListener)
