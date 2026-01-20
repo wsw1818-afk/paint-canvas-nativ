@@ -56,9 +56,10 @@ export function getMinimapImage(size: number = 120): string | null {
  * 🗺️ 미니맵 터치로 뷰포트 이동
  * @param x 목표 X 위치 (0~1 비율)
  * @param y 목표 Y 위치 (0~1 비율)
+ * @param zoom 목표 줌 레벨 (옵션, 미지정 시 현재 줌 유지)
  */
-export function setViewportPosition(x: number, y: number): void {
-  PaintCanvasModule.setViewportPosition(x, y);
+export function setViewportPosition(x: number, y: number, zoom?: number): void {
+  PaintCanvasModule.setViewportPosition(x, y, zoom ?? null);
 }
 
 /**

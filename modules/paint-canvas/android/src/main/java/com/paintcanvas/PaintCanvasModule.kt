@@ -25,9 +25,9 @@ class PaintCanvasModule : Module() {
       currentView?.captureThumbnail(size)
     }
 
-    // 🗺️ 미니맵 터치로 뷰포트 이동
-    Function("setViewportPosition") { x: Float, y: Float ->
-      currentView?.setViewportPosition(x, y)
+    // 🗺️ 미니맵 터치로 뷰포트 이동 (줌 파라미터 옵션)
+    Function("setViewportPosition") { x: Float, y: Float, zoom: Float? ->
+      currentView?.setViewportPosition(x, y, zoom)
     }
 
     // 🗑️ 특정 gameId의 진행 상황 삭제 (갤러리 리셋 시 JS에서 호출)

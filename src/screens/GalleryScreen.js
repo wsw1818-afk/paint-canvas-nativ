@@ -7,6 +7,7 @@ import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../t
 import { showPuzzleSelectAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import TexturePickerModal from '../components/TexturePickerModal';
+import { TEXTURES } from '../utils/textureStorage';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
