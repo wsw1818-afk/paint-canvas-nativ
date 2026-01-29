@@ -1,1 +1,1 @@
-🐛 갤러리 크래시 수정 (useFocusEffect → navigation.addListener)
+🐛 미니맵 위치 이동 + 줌 기능 수정 (setViewportPosition에 zoom 파라미터 추가)

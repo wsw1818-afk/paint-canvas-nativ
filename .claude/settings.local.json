@@ -96,8 +96,13 @@
       "Bash(adb -s \"adb-RFCY70SZK9P-Yjy7O5._adb-tls-connect._tcp\" install:*)",
       "Bash(ls:*)",
       "Bash(grep:*)",
-      "Bash(.gradlew.bat assembleRelease)"
+      "Bash(.gradlew.bat assembleRelease)",
+      "Bash(./gradlew.bat assembleRelease:*)",
+      "Bash(./gradlew.bat assembleDebug)"
     ],
-    "deny": []
+    "deny": [],
+    "additionalDirectories": [
+      "H:\\Claude_work\\ColorPlayExpo\\assets\\textures"
+    ]
   }
 }
