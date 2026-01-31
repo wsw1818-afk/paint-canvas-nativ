@@ -251,7 +251,22 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const textureUri = paramTextureUri || null;
 
   // 📢 뒤로가기 핸들러 (5회마다 전면 광고)
+  // 🐛 버그 수정: 뒤로가기 전 진행 상황 즉시 저장 (디바운스 3초 내 데이터 손실 방지)
   const handleBackPress = useCallback(() => {
+    // 저장 디바운스 타이머가 있으면 취소하고 즉시 저장
+    if (saveProgressRef.current) {
+      clearTimeout(saveProgressRef.current);
+      saveProgressRef.current = null;
+    }
+    // 포인트 배치 저장도 즉시 처리
+    if (pointsFlushTimerRef.current) {
+      clearTimeout(pointsFlushTimerRef.current);
+      const points = pendingPointsRef.current;
+      if (points > 0) {
+        pendingPointsRef.current = 0;
+        addPoints(points).catch(() => {});
+      }
+    }
     showBackNavigationAd(() => {
       navigation.goBack();
     });
@@ -1241,8 +1256,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                 const minimapSize = 120; // styles.minimapContainer 크기
                 const targetX = locationX / minimapSize;
                 const targetY = locationY / minimapSize;
-                // Native에 뷰포트 이동 요청
-                setViewportPosition(targetX, targetY);
+                // Native에 뷰포트 이동 요청 (4배 줌으로 이동)
+                setViewportPosition(targetX, targetY, 4.0);
               }}
             >
               {/* 색칠 맵 이미지 (음영 + 색칠된 부분) */}
