@@ -301,8 +301,8 @@ export default function GalleryScreen({ navigation }) {
                       resizeMode="cover"
                       fadeDuration={0}
                     />
-                    {/* 진행 썸네일이 없으면 음영 오버레이 표시 (0% 상태) */}
-                    {!puzzle.progressThumbnailUri && (
+                    {/* 진행 썸네일이 없고 완성도가 100% 미만일 때만 음영 오버레이 표시 */}
+                    {!puzzle.progressThumbnailUri && (puzzle.progress || 0) < 100 && (
                       <View style={styles.thumbnailShadowOverlay} />
                     )}
                   </View>
