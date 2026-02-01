@@ -591,7 +591,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           if (puzzleId) {
             const totalCells = gridSize * gridSize;
             const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
-            const progress = Math.max(0, Math.min(100, (correctCells / totalCells) * 100));
+            // 🐛 버그 수정: 소수점 반올림하여 저장 (갤러리에서 100% 판정 정확도)
+            const progress = Math.round(Math.max(0, Math.min(100, (correctCells / totalCells) * 100)));
 
             await updatePuzzle(puzzleId, {
               progress: progress,
