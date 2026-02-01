@@ -2,7 +2,7 @@
  * 텍스처 선택 모달 컴포넌트
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   View,
@@ -22,6 +22,15 @@ const ITEM_SIZE = (SCREEN_WIDTH - 60) / 4; // 4열 그리드
 
 export default function TexturePickerModal({ visible, onClose, onSelect }) {
   const [selectedId, setSelectedId] = useState('none');
+  const isMounted = useRef(true);
+
+  // 🔧 컴포넌트 언마운트 시 플래그 설정
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -31,7 +40,10 @@ export default function TexturePickerModal({ visible, onClose, onSelect }) {
 
   const loadCurrentTexture = async () => {
     const textureId = await getSelectedTextureId();
-    setSelectedId(textureId);
+    // 🔧 언마운트 체크 후 setState
+    if (isMounted.current) {
+      setSelectedId(textureId);
+    }
   };
 
   const handleSelect = async (texture) => {

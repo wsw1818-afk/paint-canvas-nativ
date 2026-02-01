@@ -1,1 +1,6 @@
-🔍 시니어 개발자 검증: PROGRESS.md 버그 목록 재평가 및 MEMORY.md 완성
+🐛 버그 수정: 갤러리 성능 개선 + React 경고 방지
+
+수정 내용:
+- App.js: key={Date.now()} → galleryRefreshKey 상태로 변경
+- GenerateScreen.js: pickImage 함수 내 isMounted 체크 추가
+- TexturePickerModal.js: isMounted 패턴 적용

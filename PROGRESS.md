@@ -1,16 +1,22 @@
 # PROGRESS.md (현재 진행: 얇게 유지)
 
 ## Dashboard (선택, 권장)
-- Progress: 0%
+- Progress: 80%
 - Token/Cost 추정: 낮음
-- Risk: 낮음~중간 (대부분 경미한 이슈)
+- Risk: 낮음 (주요 이슈 수정 완료)
 
 ## Today Goal
-- 코드 분석을 통해 발견된 버그들 정리 및 추후 수정 계획 수립
+- ~~코드 분석을 통해 발견된 버그들 정리 및 추후 수정 계획 수립~~ ✅
+- 우선순위 높은 버그 4개 수정 완료
 
 ## What changed
 - 전체 코드베이스 분석 완료 (src/screens, src/utils, src/locales, src/theme)
 - 시니어 개발자 검증 완료: 10개 이슈 중 6개 재평가, 2개 삭제, 심각도 조정
+- **수정 완료**:
+  - ✅ App.js: `key={Date.now()}` → `key={galleryRefreshKey}` (갤러리 성능 개선)
+  - ✅ imageProcessor.js: 캐시 eviction 로직 이미 존재 확인 (수정 불필요)
+  - ✅ GenerateScreen.js: `pickImage` 함수 내 `isMounted` 체크 추가
+  - ✅ TexturePickerModal.js: `isMounted` 패턴 적용
 
 ## Commands & Results
 - 파일 분석 완료: App.js, HomeScreen.js, GenerateScreen.js, PlayScreenNativeModule.js, GalleryScreen.js, SettingsScreen.js, HelpScreen.js
@@ -28,28 +34,23 @@
 - 🔧 **그러나**: 광고 ID가 `null`일 때는 전체 초기화가 스킵되므로 실제로 테스트 불가
 - **심각도 조정**: 🔴→🟠 (실제 사용 시에만 확인 가능)
 
-**2. GalleryScreen.js - 불필요한 리렌더링**
+**~~2. GalleryScreen.js - 불필요한 리렌더링~~** ✅ 수정 완료
 - 위치: [App.js:53](App.js#L53)
 - 문제: `key={Date.now()}`로 인해 매번 새 인스턴스 생성
-- 영향: 갤러리 진입 시마다 전체 마운트/언마운트 반복
-- **심각도**: 🟠 성능 저하 (UX에 영향)
-- **수정 방안**: `key` prop 제거하거나 `refreshKey` 상태로 관리
+- **수정**: `galleryRefreshKey` 상태로 변경, 갤러리 진입 시에만 증가
 
-**3. imageProcessor.js - 전역 캐시 메모리 관리**
-- 위치: [imageProcessor.js:24-25](src/utils/imageProcessor.js#L24-L25)
-- ✅ **재검증 결과**: `HSL_CACHE_MAX_SIZE = 5000` 제한이 이미 있음
-- 🔧 **그러나**: 캐시 정리 로직이 보이지 않음 (overflow 시 처리 필요)
-- **심각도 조정**: 🟡→🟠 (LRU eviction 로직 추가 권장)
+**~~3. imageProcessor.js - 전역 캐시 메모리 관리~~** ✅ 이슈 아님
+- 위치: [imageProcessor.js:61-65](src/utils/imageProcessor.js#L61-L65)
+- ✅ **재검증 결과**: 캐시 eviction 로직이 이미 존재 (절반 삭제 방식)
+- **상태**: 수정 불필요
 
 ---
 
 ### 🟡 경고 (개선 권장, 낮은 우선순위)
 
-**4. GenerateScreen.js - 재귀 호출 시 잠재적 이슈**
-- 위치: [GenerateScreen.js:101-163](src/screens/GenerateScreen.js#L101-L163)
-- ✅ **재검증 결과**: `pickImage` 함수 내 `setTimeout`은 최대 2회 재시도만 함 (`retryCount < 2`)
-- 영향: 언마운트 후 `setLoading(false)`가 호출될 수 있으나, React는 경고만 표시 (크래시 아님)
-- **심각도 조정**: 🟠→🟡 (경고 방지용 `isMounted` 추가 권장)
+**~~4. GenerateScreen.js - 재귀 호출 시 잠재적 이슈~~** ✅ 수정 완료
+- 위치: [GenerateScreen.js:101-167](src/screens/GenerateScreen.js#L101-L167)
+- **수정**: `pickImage` 함수 내 모든 `setTimeout` 콜백에 `isMounted.current` 체크 추가
 
 **~~5. PlayScreenNativeModule.js - 타이머 정리 누락~~** ❌ 삭제
 - ✅ **재검증 결과**: 코드 확인 결과 cleanup이 잘 되어 있음
@@ -70,11 +71,9 @@
 - 🔧 **그러나**: 동일 키 접근 시 race condition 가능
 - **심각도**: 🟡 (실제 충돌 케이스 확인 필요)
 
-**6. TexturePickerModal.js - 언마운트 후 setState**
-- 위치: [TexturePickerModal.js:32-35](src/components/TexturePickerModal.js#L32-L35)
-- ✅ **재검증 결과**: `loadCurrentTexture`가 async이고, 모달이 닫히면 `visible=false`가 되어 다음 렌더링에서 언마운트
-- 영향: React 경고 메시지 (크래시 아님)
-- **심각도**: 🟡 (경고 방지용 `isMounted` 패턴 권장)
+**~~6. TexturePickerModal.js - 언마운트 후 setState~~** ✅ 수정 완료
+- 위치: [TexturePickerModal.js:23-45](src/components/TexturePickerModal.js#L23-L45)
+- **수정**: `isMounted` ref 추가, `loadCurrentTexture`에서 setState 전 체크
 
 **7. PlayScreenNativeModule.js - 미니맵 타이머**
 - 위치: [PlayScreenNativeModule.js:663-684](src/screens/PlayScreenNativeModule.js#L663-L684)
@@ -90,27 +89,28 @@
 
 ---
 
-## Summary (시니어 검증 결과)
+## Summary (시니어 검증 및 수정 결과)
 
-| 원래 분류 | 이슈 수 | 검증 후 |
-|----------|--------|--------|
-| 🔴 심각 | 1개 | 0개 (🟠로 하향) |
-| 🟠 중간 | 2개 | 3개 |
-| 🟡 경고 | 7개 | 5개 (2개 삭제) |
-| ❌ 삭제 | - | 2개 (오진단) |
+| 분류 | 원래 | 검증 후 | 수정 완료 |
+|------|------|--------|----------|
+| 🔴 심각 | 1개 | 0개 | - |
+| 🟠 중간 | 2개 | 3개 | 2개 ✅ |
+| 🟡 경고 | 7개 | 5개 | 2개 ✅ |
+| ❌ 삭제 | - | 2개 | - |
+| ✅ 이슈 아님 | - | 1개 | - |
 
 **결론**:
 - 앱 크래시를 유발하는 심각한 버그는 없음
-- 대부분 성능 최적화 또는 React 경고 방지 수준
-- 가장 우선 수정 권장: `App.js`의 `key={Date.now()}` (체감 성능에 영향)
+- 우선순위 높은 4개 이슈 수정 완료
+- 남은 이슈: adManager 테스트 (광고 ID 활성화 시), HomeScreen 병렬 작업, 미니맵 타이머, locales 리스너
 
 ---
 
-## Next (우선순위 재조정)
-1. 🟠 **App.js**: `key={Date.now()}` 제거 → 갤러리 성능 개선
-2. 🟠 **imageProcessor.js**: HSL 캐시 overflow 처리 로직 추가
-3. 🟡 **GenerateScreen.js**: `isMounted` ref 추가로 React 경고 방지
-4. 🟡 **TexturePickerModal.js**: `isMounted` 패턴 적용
+## Next (남은 이슈)
+1. 🟠 **adManager.js**: 광고 ID 활성화 후 실제 테스트 필요
+2. 🟡 **HomeScreen.js**: `runMigration`/`createDefaults` 충돌 케이스 확인
+3. 🟡 **PlayScreenNativeModule.js**: 미니맵 타이머 closure 문제 (낮은 우선순위)
+4. 🟡 **locales/index.js**: 리스너 cleanup 호출 여부 확인
 
 ---
 ## Archive Rule (요약)

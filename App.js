@@ -15,6 +15,8 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState('Home');
   const [params, setParams] = useState({});
   const [isReady, setIsReady] = useState(false);
+  // 🔧 갤러리 새로고침용 키 (Date.now() 대신 명시적 카운터 사용)
+  const [galleryRefreshKey, setGalleryRefreshKey] = useState(0);
 
   // 🌐 앱 시작 시 언어 설정 및 광고 초기화
   useEffect(() => {
@@ -32,6 +34,10 @@ export default function App() {
     navigate: (screen, screenParams = {}) => {
       setCurrentScreen(screen);
       setParams(screenParams);
+      // 🔧 갤러리 진입 시 refreshKey 증가 (새로고침 트리거)
+      if (screen === 'Gallery') {
+        setGalleryRefreshKey(prev => prev + 1);
+      }
     },
     goBack: () => {
       setCurrentScreen('Home');
@@ -50,7 +56,7 @@ export default function App() {
       case 'Play':
         return <PlayScreenNativeModule navigation={navigation} route={{ params }} />;
       case 'Gallery':
-        return <GalleryScreen key={Date.now()} navigation={navigation} />;
+        return <GalleryScreen key={galleryRefreshKey} navigation={navigation} />;
       case 'Settings':
         return <SettingsScreen navigation={navigation} />;
       case 'Help':

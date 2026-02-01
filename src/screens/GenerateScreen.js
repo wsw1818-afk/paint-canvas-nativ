@@ -103,6 +103,7 @@ export default function GenerateScreen({ route, navigation }) {
     if (!permissionReady && retryCount === 0) {
       setLoading(true);
       setTimeout(() => {
+        if (!isMounted.current) return; // 🔧 언마운트 체크
         setLoading(false);
         pickImage(1);
       }, 500);
@@ -155,9 +156,13 @@ export default function GenerateScreen({ route, navigation }) {
       // ActivityResultLauncher 오류인 경우 한 번 더 시도
       if (error.message?.includes('ActivityResultLauncher') && retryCount < 2) {
         console.log(`재시도 ${retryCount + 1}/2...`);
-        setTimeout(() => pickImage(retryCount + 1), 500);
+        setTimeout(() => {
+          if (!isMounted.current) return; // 🔧 언마운트 체크
+          pickImage(retryCount + 1);
+        }, 500);
         return;
       }
+      if (!isMounted.current) return; // 🔧 언마운트 체크
       setLoading(false);
       Alert.alert(t('common.error'), t('generate.loadImageError'));
     }
