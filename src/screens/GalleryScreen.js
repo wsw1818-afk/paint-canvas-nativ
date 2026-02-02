@@ -280,12 +280,15 @@ export default function GalleryScreen({ navigation }) {
               : { icon: '🧶', name: t('gallery.modeWeave'), color: '#9B59B6' };
 
             // 썸네일 이미지 우선순위:
-            // 1. 진행 썸네일 (색칠 진행 중인 상태)
-            // 2. 최적화된 썸네일 (새로 생성된 퍼즐)
-            // 3. 원본 이미지 (기존 퍼즐 하위 호환)
-            const thumbnailUri = puzzle.progressThumbnailUri
-              ? puzzle.progressThumbnailUri
-              : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
+            // 1. 완성 이미지 (100% 완료된 퍼즐)
+            // 2. 진행 썸네일 (색칠 진행 중인 상태)
+            // 3. 최적화된 썸네일 (새로 생성된 퍼즐)
+            // 4. 원본 이미지 (기존 퍼즐 하위 호환)
+            const thumbnailUri = puzzle.completedImageUri
+              ? puzzle.completedImageUri
+              : puzzle.progressThumbnailUri
+                ? puzzle.progressThumbnailUri
+                : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
 
             return (
               <View key={puzzle.id} style={styles.puzzleCard}>

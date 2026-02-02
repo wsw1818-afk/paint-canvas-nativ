@@ -45,6 +45,23 @@
 
 ---
 
+## ✅ 수정 완료된 이슈
+
+### GalleryScreen.js - 100% 완성 퍼즐 썸네일 버그 ✅
+- **위치**: `src/screens/GalleryScreen.js:282-291`
+- **문제**: 썸네일 우선순위에 `completedImageUri` (완성 이미지)가 누락됨
+- **수정**: 썸네일 우선순위에 `completedImageUri`를 1순위로 추가
+  ```javascript
+  const thumbnailUri = puzzle.completedImageUri  // 1순위: 완성 이미지
+    ? puzzle.completedImageUri
+    : puzzle.progressThumbnailUri  // 2순위: 진행 썸네일
+      ? puzzle.progressThumbnailUri
+      : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
+  ```
+- **상태**: ✅ 수정 완료 (2026-02-02)
+
+---
+
 ## 릴리즈 상태
 - ✅ 광고: 비활성화 상태 (`null`)
 - ✅ 빌드 타입: JS 수정만 → Hot Reload로 반영 (APK 빌드 불필요)
@@ -53,8 +70,7 @@
 ---
 
 ## Next
-- 모든 이슈 해결 완료 ✅
-- 추가 기능 구현 또는 최적화 필요 시 진행
+- 없음 (모든 이슈 수정 완료)
 
 ---
 ## Archive Rule
