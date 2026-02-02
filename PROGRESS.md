@@ -6,7 +6,7 @@
 
 ## 2026-02-02 작업 내역
 
-### 완료된 수정 (6개)
+### 완료된 수정 (7개)
 
 | 파일 | 수정 내용 |
 |------|----------|
@@ -16,6 +16,7 @@
 | [HomeScreen.js:21-45](src/screens/HomeScreen.js) | `runMigration`/`createDefaults` 순차 실행으로 변경 (race condition 방지) |
 | [adManager.js:47-50,75-93,252-270](src/utils/adManager.js) | 🔧 리스너 구독 해제 함수 저장 + `cleanupAdListeners()` 함수 추가 (메모리 누수 수정) |
 | [PlayScreenNativeModule.js:626-634](src/screens/PlayScreenNativeModule.js) | 🔧 useEffect cleanup에 `saveProgressRef` 타이머 정리 추가 |
+| [GalleryScreen.js:282-291](src/screens/GalleryScreen.js) | 🐛 썸네일 우선순위에 `completedImageUri` 1순위 추가 (100% 완성 퍼즐 흐릿함 버그 수정) |
 
 ### 검증 완료 - 이슈 아님 (2개)
 
@@ -48,24 +49,37 @@
 ## ✅ 수정 완료된 이슈
 
 ### GalleryScreen.js - 100% 완성 퍼즐 썸네일 버그 ✅
-- **위치**: `src/screens/GalleryScreen.js:282-291`
+- **위치**: [GalleryScreen.js:282-291](src/screens/GalleryScreen.js#L282-L291)
 - **문제**: 썸네일 우선순위에 `completedImageUri` (완성 이미지)가 누락됨
-- **수정**: 썸네일 우선순위에 `completedImageUri`를 1순위로 추가
+- **현상**: 100% 완성된 퍼즐이 갤러리에서 흐릿하게 표시됨 (원본 이미지 + 음영 오버레이)
+- **원인 분석**:
+  - 퍼즐 완료 시 `completedImageUri`에 캡처된 완성 이미지가 저장됨
+  - 그러나 GalleryScreen에서는 이를 썸네일로 사용하지 않았음
+  - 기존 우선순위: `progressThumbnailUri` → `thumbnailUri` → `imageUri`
+  - `progressThumbnailUri`가 없는 100% 완료 퍼즐은 원본 이미지가 표시되고 음영 오버레이 적용됨
+- **수정**: 썸네일 우선순위 4단계로 변경
   ```javascript
-  const thumbnailUri = puzzle.completedImageUri  // 1순위: 완성 이미지
-    ? puzzle.completedImageUri
-    : puzzle.progressThumbnailUri  // 2순위: 진행 썸네일
-      ? puzzle.progressThumbnailUri
-      : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
+  // 기존 (3단계)
+  progressThumbnailUri → thumbnailUri → imageUri
+
+  // 수정 후 (4단계)
+  completedImageUri → progressThumbnailUri → thumbnailUri → imageUri
   ```
-- **상태**: ✅ 수정 완료 (2026-02-02)
+- **상태**: ✅ 수정 완료 + Release APK 빌드 + 기기 설치 완료 (2026-02-02)
 
 ---
 
 ## 릴리즈 상태
 - ✅ 광고: 비활성화 상태 (`null`)
-- ✅ 빌드 타입: JS 수정만 → Hot Reload로 반영 (APK 빌드 불필요)
-- 📍 배포 경로: `D:\OneDrive\코드작업\결과물\ColorPlay\`
+- ✅ 빌드: Release APK 빌드 완료 (2026-02-02)
+- ✅ 설치: R3CT31166YK 기기에 설치 완료
+- 📍 배포 경로: `D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-release.apk`
+
+### 빌드 상세
+- **캐시 정리**: `.expo`, `node_modules\.cache`, `android\app\build`, `android\.gradle` 4종 삭제
+- **빌드 명령**: `gradlew.bat clean assembleRelease`
+- **빌드 시간**: 4분 48초
+- **포함된 수정**: 7개 버그 수정 전체 반영
 
 ---
 

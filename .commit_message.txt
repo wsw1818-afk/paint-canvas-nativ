@@ -1,4 +1,5 @@
-🐛 GalleryScreen 완성 퍼즐 썸네일 버그 수정
+📦 릴리즈 빌드 완료 (7개 버그 수정 포함)
 
-- completedImageUri를 썸네일 우선순위 1순위로 추가
-- 100% 완성 퍼즐이 흐릿하게 보이던 문제 해결
+- GalleryScreen: completedImageUri 썸네일 우선순위 1순위 추가
+- 4가지 캐시 삭제 후 clean 빌드
+- R3CT31166YK 기기에 설치 완료
