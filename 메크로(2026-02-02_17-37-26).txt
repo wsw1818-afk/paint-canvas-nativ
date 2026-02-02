@@ -1,0 +1,118 @@
+Sub CreateNanoBananaPresentation()
+    Dim pptApp As Object
+    Dim pptPres As Object
+    Dim slideIndex As Integer
+    Dim slide As Object
+    
+    ' PowerPoint 애플리케이션 생성 또는 확인
+    On Error Resume Next
+    Set pptApp = GetObject(, "PowerPoint.Application")
+    If Err.Number <> 0 Then
+        Set pptApp = CreateObject("PowerPoint.Application")
+        pptApp.Visible = True
+    End If
+    On Error GoTo 0
+    
+    ' 새 프레젠테이션 생성
+    Set pptPres = pptApp.Presentations.Add
+    
+    ' --- 슬라이드 1: 타이틀 ---
+    slideIndex = 1
+    Set slide = pptPres.Slides.Add(slideIndex, 1) ' ppLayoutTitle
+    slide.Shapes(1).TextFrame.TextRange.Text = "나노바나나(Nano Banana)"
+    slide.Shapes(2).TextFrame.TextRange.Text = "미래를 바꿀 초소형 과일 혁명"
+    
+    ' --- 슬라이드 2: 소개 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2) ' ppLayoutText
+    slide.Shapes(1).TextFrame.TextRange.Text = "나노바나나란 무엇인가?"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 나노 기술(Nanotechnology)과 생명공학의 결합" & vbCrLf & _
+        "• 기존 바나나의 맛과 영양을 유지하면서 크기는 1/1000로 축소" & vbCrLf & _
+        "• 언제 어디서나 간편하게 섭취 가능한 미래형 식량" & vbCrLf & _
+        "• '작지만 확실한 행복'의 결정체"
+
+    ' --- 슬라이드 3: 주요 특징 1 - 나노 사이즈 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "Feature 1: Nano Size, Huge Taste"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 쌀알 크기의 바나나 한 개에 일반 바나나 10개 분량의 에너지 압축" & vbCrLf & _
+        "• 분자 요리 기법을 응용한 텍스처 보존" & vbCrLf & _
+        "• 주머니 속에 1년치 식량 휴대 가능" & vbCrLf & _
+        "• 탄소 발자국 99% 감소 효과"
+
+    ' --- 슬라이드 4: 주요 특징 2 - 스마트 필링 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "Feature 2: Smart Peeling Tech"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 껍질을 까는 불편함 제거: 자동 분해되는 바이오 폴리머 껍질" & vbCrLf & _
+        "• 공기 접촉 시 3초 만에 껍질이 기화되어 사라짐" & vbCrLf & _
+        "• 쓰레기 발생 Zero 실현" & vbCrLf & _
+        "• 위생적이고 안전한 보관 가능"
+
+    ' --- 슬라이드 5: 비교 - 일반 vs 나노 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "일반 바나나 vs 나노바나나"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 무게: 120g  vs  0.1g" & vbCrLf & _
+        "• 보관기간: 1주일  vs  10년 (상온)" & vbCrLf & _
+        "• 섭취시간: 1분  vs  0.1초" & vbCrLf & _
+        "• 휴대성: 불편함  vs  무한대"
+
+    ' --- 슬라이드 6: 활용 분야 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "활용 분야: 우주에서 사막까지"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 우주비행사(Space Snacks): 부피 최소화, 영양 극대화" & vbCrLf & _
+        "• 재난 구호 물품: 드론으로 수백만 개 투하 가능" & vbCrLf & _
+        "• 스포츠 에너지원: 마라톤 중에도 씹지 않고 섭취" & vbCrLf & _
+        "• 다이어트: 뇌를 속여 포만감을 주는 신호 전달질체 함유"
+
+    ' --- 슬라이드 7: 영양 정보 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "Quantum Potassium (양자 칼륨)"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 기존 칼륨보다 체내 흡수율 500% 증가" & vbCrLf & _
+        "• 나노 캡슐화된 비타민 B6, C, 마그네슘" & vbCrLf & _
+        "• 즉각적인 근육 회복 및 피로 개선" & vbCrLf & _
+        "• 섭취 시 기분이 좋아지는 세로토닌 부스터 효과"
+
+    ' --- 슬라이드 8: 시장 분석 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "Market Analysis"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 글로벌 슈퍼푸드 시장의 새로운 패러다임" & vbCrLf & _
+        "• 2030년 예상 시장 규모: 500억 달러" & vbCrLf & _
+        "• 타겟 고객: 바쁜 현대인, 운동선수, 우주 매니아" & vbCrLf & _
+        "• 경쟁사: 마이크로 멜론, 피코 파인애플 (아직 개발 단계)"
+
+    ' --- 슬라이드 9: 향후 로드맵 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "Future Roadmap"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 2026 Q3: 시제품 출시 및 FDA 승인 신청" & vbCrLf & _
+        "• 2027 Q1: 글로벌 편의점 입점 (계산대 옆 캡슐 형태)" & vbCrLf & _
+        "• 2028: 개인화된 맛 커스텀 서비스 (초코맛, 딸기맛 나노바나나)" & vbCrLf & _
+        "• 2030: 가정용 나노바나나 재배기 보급"
+
+    ' --- 슬라이드 10: 결론 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "결론: 바나나의 재정의"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "나노바나나는 단순한 과일이 아닙니다." & vbCrLf & _
+        "인류의 식생활을 바꿀 거대한 혁신입니다." & vbCrLf & vbCrLf & _
+        "Small Change, Big Impact." & vbCrLf & _
+        "지금 나노바나나 혁명에 동참하세요!"
+
+    ' 알림
+    MsgBox "나노바나나 10장 프레젠테이션 생성이 완료되었습니다!", vbInformation, "완료"
+
+End Sub

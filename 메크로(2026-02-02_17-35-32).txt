@@ -1,0 +1,93 @@
+Sub CreateGeminiPresentation()
+    Dim pptApp As Object
+    Dim pptPres As Object
+    Dim slideIndex As Integer
+    Dim slide As Object
+    Dim titleLayout As Object
+    Dim contentLayout As Object
+    
+    ' PowerPoint 애플리케이션 생성 또는 확인
+    On Error Resume Next
+    Set pptApp = GetObject(, "PowerPoint.Application")
+    If Err.Number <> 0 Then
+        Set pptApp = CreateObject("PowerPoint.Application")
+        pptApp.Visible = True
+    End If
+    On Error GoTo 0
+    
+    ' 새 프레젠테이션 생성
+    Set pptPres = pptApp.Presentations.Add
+    
+    ' 레이아웃 설정 (제목 슬라이드: 1, 내용 슬라이드: 2)
+    ' 사용자 환경에 따라 레이아웃 인덱스가 다를 수 있으나 보통 표준입니다.
+    
+    ' --- 슬라이드 1: 타이틀 ---
+    slideIndex = 1
+    Set slide = pptPres.Slides.Add(slideIndex, 1) ' ppLayoutTitle
+    slide.Shapes(1).TextFrame.TextRange.Text = "재미나이(Gemini)를 선택해야 하는 이유"
+    slide.Shapes(2).TextFrame.TextRange.Text = "구글의 가장 유능한 멀티모달 AI 모델"
+    
+    ' --- 슬라이드 2: 소개 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2) ' ppLayoutText
+    slide.Shapes(1).TextFrame.TextRange.Text = "Gemini란 무엇인가?"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 구글 딥마인드(Google DeepMind)가 개발한 최신 AI 모델" & vbCrLf & _
+        "• 처음부터 멀티모달(Multimodal)로 설계됨" & vbCrLf & _
+        "• 텍스트, 코드, 오디오, 이미지, 비디오 등 다양한 형태의 정보를 동시에 이해하고 처리" & vbCrLf & _
+        "• 데이터 센터에서 모바일 기기까지 확장 가능한 유연성 (Ultra, Pro, Flash, Nano)"
+
+    ' --- 슬라이드 3: 멀티모달 능력 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "압도적인 멀티모달(Multimodal) 능력"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 텍스트 + 이미지 + 오디오를 결합한 복합 추론 가능" & vbCrLf & _
+        "• 비디오를 보고 내용을 요약하거나 특정 장면을 검색" & vbCrLf & _
+        "• 복잡한 차트와 그래프를 즉시 해석하 인사이트 도출" & vbCrLf & _
+        "• 별도의 OCR 도구 없이도 손글씨나 수식 이해"
+
+    ' --- 슬라이드 4: 긴 문맥 창 (Long Context) ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "업계 최대 수준의 컨텍스트 윈도우"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• 100만(1M) 토큰 이상의 방대한 정보 처리 (Gemini 1.5 Pro)" & vbCrLf & _
+        "• 수백 페이지의 문서, 코드베이스 전체, 긴 영상을 한 번에 입력 가능" & vbCrLf & _
+        "• '니들 인 어 헤이스택(Needle in a haystack)' 테스트에서 99% 이상의 정확도로 정보 검색" & vbCrLf & _
+        "• 과거의 대화 내용이나 방대한 프로젝트 문맥을 잊지 않고 기억"
+
+    ' --- 슬라이드 5: 성능과 추론 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "탁월한 성능과 코딩 능력"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• MMLU(대규모 다중 작업 언어 이해) 벤치마크에서 인간 전문가 수준(90%+)을 최초로 달성" & vbCrLf & _
+        "• 복잡한 수학 문제 해결 및 논리적 추론 능력 강화" & vbCrLf & _
+        "• AlphaCode 2 기반의 강력한 코딩 능력 (코드 생성, 디버깅, 설명)" & vbCrLf & _
+        "• 다양한 프로그래밍 언어(Python, Java, C++, Go 등) 지원"
+
+    ' --- 슬라이드 6: 구글 생태계 통합 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "구글 생태계와의 완벽한 통합"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "• Google Workspace 연동 (Docs, Sheets, Slides, Gmail)" & vbCrLf & _
+        "• Android 모바일 경험의 혁신" & vbCrLf & _
+        "• Google Cloud Vertex AI를 통한 기업용 맞춤형 솔루션 구축 용이" & vbCrLf & _
+        "• 최신 정보 검색을 위한 Google Search와의 결합 (Grounding)"
+
+    ' --- 슬라이드 7: 결론 ---
+    slideIndex = slideIndex + 1
+    Set slide = pptPres.Slides.Add(slideIndex, 2)
+    slide.Shapes(1).TextFrame.TextRange.Text = "결론: 왜 재미나이인가?"
+    slide.Shapes(2).TextFrame.TextRange.Text = _
+        "1. 가장 자연스러운 멀티모달 상호작용" & vbCrLf & _
+        "2. 압도적인 긴 문맥 처리 능력으로 불가능했던 작업 실현" & vbCrLf & _
+        "3. 구글의 강력한 인프라와 생태계가 주는 신뢰성과 편의성" & vbCrLf & vbCrLf & _
+        "지금 바로 Gemini를 경험해보세요!"
+
+    ' 알림
+    MsgBox "프레젠테이션 생성이 완료되었습니다!", vbInformation, "완료"
+
+End Sub
