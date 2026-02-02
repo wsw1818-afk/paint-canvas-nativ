@@ -18,32 +18,30 @@ export default function HomeScreen({ navigation }) {
     return unsubscribe;
   }, []);
 
-  // 앱 시작 시 기존 퍼즐 마이그레이션 + 기본 퍼즐 생성 (백그라운드 실행)
+  // 앱 시작 시 기존 퍼즐 마이그레이션 + 기본 퍼즐 생성 (순차 실행으로 race condition 방지)
   useEffect(() => {
-    const runMigration = async () => {
+    const initializePuzzles = async () => {
+      // 🔧 순차 실행: 두 함수 모두 @puzzles 키를 사용하므로 병렬 실행 시 race condition 발생
       try {
-        const result = await migratePuzzles();
-        if (!result.alreadyDone && result.migrated > 0) {
-          console.log(`🔄 ${result.migrated}개 퍼즐 마이그레이션 완료`);
+        const migrationResult = await migratePuzzles();
+        if (!migrationResult.alreadyDone && migrationResult.migrated > 0) {
+          console.log(`🔄 ${migrationResult.migrated}개 퍼즐 마이그레이션 완료`);
         }
       } catch (error) {
         console.warn('마이그레이션 오류:', error);
       }
-    };
 
-    const createDefaults = async () => {
       try {
-        const result = await createDefaultPuzzles();
-        if (result.created && result.count > 0) {
-          console.log(`🎨 ${result.count}개 기본 퍼즐 생성 완료`);
+        const defaultResult = await createDefaultPuzzles();
+        if (defaultResult.created && defaultResult.count > 0) {
+          console.log(`🎨 ${defaultResult.count}개 기본 퍼즐 생성 완료`);
         }
       } catch (error) {
         console.warn('기본 퍼즐 생성 오류:', error);
       }
     };
 
-    runMigration();
-    createDefaults();
+    initializePuzzles();
   }, []);
 
   return (
