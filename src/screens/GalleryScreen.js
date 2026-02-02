@@ -134,6 +134,42 @@ export default function GalleryScreen({ navigation }) {
     );
   };
 
+  // 🐛 완성 이미지 재생성 핸들러
+  const handleRecaptureCompletion = (puzzle) => {
+    Alert.alert(
+      '완성 이미지 재생성',
+      `"${puzzle.title || '제목 없음'}"의 완성 이미지를 다시 생성하시겠습니까?\n\n퍼즐을 다시 열어 완성 이미지를 자동으로 캡처합니다.`,
+      [
+        {
+          text: '취소',
+          style: 'cancel'
+        },
+        {
+          text: '재생성',
+          onPress: () => {
+            // 퍼즐을 Play 화면으로 열기 (isRecapture 플래그 전달)
+            const completionMode = puzzle.completionMode || 'ORIGINAL';
+            const textureUri = puzzle.textureUri || null;
+            
+            showPuzzleSelectAd(() => {
+              navigation.navigate('Play', {
+                puzzleId: puzzle.id,
+                imageUri: puzzle.imageUri || puzzle.imageBase64,
+                colorCount: puzzle.colorCount,
+                gridSize: puzzle.gridSize,
+                gridColors: puzzle.gridColors,
+                dominantColors: puzzle.dominantColors,
+                completionMode: completionMode,
+                textureUri: textureUri,
+                isRecapture: true  // 🐛 완성 이미지 재생성 플래그
+              });
+            });
+          }
+        }
+      ]
+    );
+  };
+
   // 🎨 텍스처 선택 완료 핸들러
   const handleTextureSelect = useCallback((texture) => {
     console.log('[GalleryScreen] 🎨 handleTextureSelect 호출됨:', JSON.stringify({
@@ -332,6 +368,15 @@ export default function GalleryScreen({ navigation }) {
                 </TouchableOpacity>
 
                 <View style={styles.actionButtons}>
+                  {/* 🐛 완성 이미지 재생성 버튼 (100% 완료 + 이미지 누락 시) */}
+                  {Math.round(puzzle.progress || 0) >= 100 && !puzzle.completedImageUri && (
+                    <TouchableOpacity
+                      style={styles.recaptureButton}
+                      onPress={() => handleRecaptureCompletion(puzzle)}
+                    >
+                      <Text style={styles.recaptureButtonText}>📷</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     style={styles.resetButton}
                     onPress={() => handleResetPuzzle(puzzle)}
@@ -503,6 +548,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   deleteButtonText: {
+    fontSize: 20,
+  },
+  // 🐛 완성 이미지 재생성 버튼 스타일
+  recaptureButton: {
+    padding: SpotifySpacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: SpotifyColors.primary,
+    borderRadius: SpotifyRadius.md,
+    marginBottom: SpotifySpacing.sm,
+  },
+  recaptureButtonText: {
     fontSize: 20,
   },
   puzzleInfo: {

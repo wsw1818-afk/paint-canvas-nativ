@@ -1,5 +1,5 @@
-📦 릴리즈 빌드 완료 (7개 버그 수정 포함)
+📦 릴리즈 빌드 완료 (9개 버그 수정 포함)
 
-- GalleryScreen: completedImageUri 썸네일 우선순위 1순위 추가
-- 4가지 캐시 삭제 후 clean 빌드
-- R3CT31166YK 기기에 설치 완료
+- 완성 이미지 누락 버그 수정 (자동캡처 + 📷 수동 재생성)
+- GalleryScreen 썸네일 우선순위 개선
+- RFCY70SZK9P 기기에 설치 완료

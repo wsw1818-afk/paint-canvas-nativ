@@ -646,7 +646,20 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     }
 
     setIsNativeReady(true);
-  }, []);
+
+    // 🐛 완성 이미지 누락 버그 수정: 100% 완료된 퍼즐이지만 완성 이미지가 없는 경우 자동 캡처
+    const totalCells = gridSize * gridSize;
+    const correctCells = nativeFilledCells - (nativeWrongCells || 0);
+    const progress = Math.round((correctCells / totalCells) * 100);
+    
+    if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
+      console.log('[PlayScreen] 🎉 100% 완료 퍼즐 감지! 완성 이미지 캡처 시작...');
+      // 약간의 지연 후 캡처 (Native 캔버스 완전히 준비될 때까지)
+      setTimeout(() => {
+        captureAndSaveCompletion();
+      }, 1000);
+    }
+  }, [gridSize, puzzleId, captureAndSaveCompletion]);
 
   // 🔍 디버그 로그 핸들러 (성능 최적화: 디버그 패널 열릴 때만 활성화)
   const handleDebugLog = useCallback((event) => {
