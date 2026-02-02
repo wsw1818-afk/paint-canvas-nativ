@@ -45,6 +45,11 @@ let interstitialAd = null;
 let isAdLoaded = false;
 let isAdLoading = false;
 
+// 🔧 리스너 구독 해제 함수들 (메모리 누수 방지)
+let unsubscribeLoaded = null;
+let unsubscribeError = null;
+let unsubscribeClosed = null;
+
 // 인터랙션 카운터 (메모리)
 let interactionCounts = {
   backNavigation: 0,
@@ -69,20 +74,23 @@ export const initializeInterstitialAd = () => {
     requestNonPersonalizedAdsOnly: true,
   });
 
-  // 광고 이벤트 리스너
-  interstitialAd.addAdEventListener(AdEventType.LOADED, () => {
+  // 🔧 기존 리스너 정리 (재초기화 시 메모리 누수 방지)
+  cleanupAdListeners();
+
+  // 광고 이벤트 리스너 (구독 해제 함수 저장)
+  unsubscribeLoaded = interstitialAd.addAdEventListener(AdEventType.LOADED, () => {
     console.log('📢 전면 광고 로드 완료');
     isAdLoaded = true;
     isAdLoading = false;
   });
 
-  interstitialAd.addAdEventListener(AdEventType.ERROR, (error) => {
+  unsubscribeError = interstitialAd.addAdEventListener(AdEventType.ERROR, (error) => {
     console.log('📢 전면 광고 로드 실패:', error);
     isAdLoaded = false;
     isAdLoading = false;
   });
 
-  interstitialAd.addAdEventListener(AdEventType.CLOSED, () => {
+  unsubscribeClosed = interstitialAd.addAdEventListener(AdEventType.CLOSED, () => {
     console.log('📢 전면 광고 닫힘');
     isAdLoaded = false;
     // 다음 광고 미리 로드
@@ -244,6 +252,25 @@ export const resetAdCounters = () => {
 };
 
 /**
+ * 🔧 광고 리스너 정리 (메모리 누수 방지)
+ * 앱 종료 시 또는 광고 모듈 재초기화 전에 호출
+ */
+export const cleanupAdListeners = () => {
+  if (unsubscribeLoaded) {
+    unsubscribeLoaded();
+    unsubscribeLoaded = null;
+  }
+  if (unsubscribeError) {
+    unsubscribeError();
+    unsubscribeError = null;
+  }
+  if (unsubscribeClosed) {
+    unsubscribeClosed();
+    unsubscribeClosed = null;
+  }
+};
+
+/**
  * 광고 설정 업데이트
  */
 export const updateAdConfig = (newConfig) => {
@@ -259,4 +286,5 @@ export default {
   showPuzzleSelectAd,
   resetAdCounters,
   updateAdConfig,
+  cleanupAdListeners,
 };

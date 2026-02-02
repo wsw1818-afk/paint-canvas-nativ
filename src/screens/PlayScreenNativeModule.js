@@ -617,10 +617,19 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   }, [gameId, puzzleId, gridSize, captureAndSaveCompletion, captureProgressThumbnail]);
 
   // filledCells 변경 시 자동 저장 (score는 제외 - 너무 자주 변경됨)
+  // 🔧 언마운트 시 saveProgressRef 타이머 정리 추가
   useEffect(() => {
     if (isCanvasReady && filledCells.size > 0) {
       saveProgress();
     }
+
+    // 🔧 cleanup: 언마운트 시 대기 중인 저장 타이머 정리
+    return () => {
+      if (saveProgressRef.current) {
+        clearTimeout(saveProgressRef.current);
+        saveProgressRef.current = null;
+      }
+    };
   }, [filledCells.size, isCanvasReady, saveProgress]);
 
   // 🚀 Native 캔버스 초기화 완료 핸들러

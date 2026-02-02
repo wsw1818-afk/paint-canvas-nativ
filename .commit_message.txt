@@ -1,11 +1,4 @@
-🐛 버그 수정 완료: 6개 이슈 해결
+🐛 Kimi 재검증 이슈 2개 수정 완료
 
-수정 내용:
-- App.js: key={Date.now()} → galleryRefreshKey 상태로 변경 (갤러리 성능 개선)
-- GenerateScreen.js: pickImage 함수 내 isMounted 체크 추가
-- TexturePickerModal.js: isMounted 패턴 적용
-- HomeScreen.js: runMigration/createDefaults 순차 실행으로 변경 (race condition 방지)
-
-검증 완료 (이슈 아님):
-- imageProcessor.js: 캐시 eviction 로직 이미 존재
-- locales/index.js: 모든 화면에서 cleanup 정상 동작
+1. adManager.js: 리스너 구독 해제 함수 저장 + cleanupAdListeners() 추가
+2. PlayScreenNativeModule.js: useEffect cleanup에 saveProgressRef 타이머 정리 추가

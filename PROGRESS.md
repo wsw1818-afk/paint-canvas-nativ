@@ -14,22 +14,29 @@
 | [GenerateScreen.js:106,160-162](src/screens/GenerateScreen.js) | `pickImage` 함수 내 `setTimeout` 콜백에 `isMounted` 체크 추가 |
 | [TexturePickerModal.js:25-33,44](src/components/TexturePickerModal.js) | `isMounted` ref 추가, async 함수에서 setState 전 체크 |
 | [HomeScreen.js:21-45](src/screens/HomeScreen.js) | `runMigration`/`createDefaults` 순차 실행으로 변경 (race condition 방지) |
+| [adManager.js:47-50,75-93,252-270](src/utils/adManager.js) | 🔧 리스너 구독 해제 함수 저장 + `cleanupAdListeners()` 함수 추가 (메모리 누수 수정) |
+| [PlayScreenNativeModule.js:626-634](src/screens/PlayScreenNativeModule.js) | 🔧 useEffect cleanup에 `saveProgressRef` 타이머 정리 추가 |
 
-### 검증 완료 - 이슈 아님 (4개)
+### 검증 완료 - 이슈 아님 (2개)
 
 | 파일 | 검증 결과 |
 |------|----------|
-| adManager.js | 코드 올바름, 광고 비활성화 상태라 테스트 불가 |
-| imageProcessor.js | 캐시 eviction 로직 이미 존재 (61-65줄) |
-| PlayScreenNativeModule.js 타이머 | cleanup 정상 (452-456, 974-978줄) |
-| locales/index.js | 모든 화면에서 cleanup 정상 |
+| imageProcessor.js | 캐시 eviction 로직 존재 (61-65줄), 5000개 초과 시 절반 삭제 |
+| locales/index.js | GalleryScreen, HelpScreen, HomeScreen, GenerateScreen, SettingsScreen 모두 cleanup 정상 |
 
-### 삭제된 이슈 (2개)
-- PlayScreenNativeModule.js Race Condition: React 표준 패턴 사용 중
-- PlayScreenNativeModule.js 타이머 정리: 대부분 cleanup 존재
+### 🟡 보류: 미니맵 타이머 closure
+- **위치**: `src/screens/PlayScreenNativeModule.js:663-684`
+- **문제**: `showMinimap` false 변경 시에도 대기 중인 타이머가 실행될 수 있음
+- **판단**: 불필요한 연산만 발생, 복잡도 대비 이득 적음
 
-### 보류 (1개)
-- 미니맵 타이머 closure: 불필요한 연산만 발생 (크래시 아님), 복잡도 대비 이득 적음
+---
+
+## Kimi 재검증 결과 → 수정 완료
+
+| 파일 | Kimi 판정 | 시니어 검증 | 조치 |
+|------|----------|------------|------|
+| adManager.js | 🔴 리스너 누수 | ✅ **정확함** - `addAdEventListener` 반환값 저장 안 함 | ✅ 수정 완료 |
+| PlayScreenNativeModule.js | 🟡 saveProgressRef cleanup 누락 | ✅ **정확함** - useEffect cleanup 없음 | ✅ 수정 완료 |
 
 ---
 
@@ -41,7 +48,8 @@
 ---
 
 ## Next
-- 광고 활성화 시 adManager.js 테스트 필요
+- 모든 이슈 해결 완료 ✅
+- 추가 기능 구현 또는 최적화 필요 시 진행
 
 ---
 ## Archive Rule
