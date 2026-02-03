@@ -86,6 +86,10 @@ export default function GalleryScreen({ navigation }) {
   const [showTextureModal, setShowTextureModal] = useState(false);
   const [pendingPuzzle, setPendingPuzzle] = useState(null);  // 텍스처 선택 후 시작할 퍼즐
 
+  // 🐛 자동 복구 대상 퍼즐 목록 상태 (loadSavedPuzzles보다 먼저 선언해야 함)
+  const [puzzlesToRepair, setPuzzlesToRepair] = useState([]);
+  const isAutoRepairing = useRef(false);
+
   // 🌐 언어 변경 리스너
   useEffect(() => {
     const unsubscribe = addLanguageChangeListener(() => {
@@ -241,10 +245,6 @@ export default function GalleryScreen({ navigation }) {
       ]
     );
   };
-
-  // 🐛 자동 복구 대상 퍼즐 목록 상태
-  const [puzzlesToRepair, setPuzzlesToRepair] = useState([]);
-  const isAutoRepairing = useRef(false);
 
   // 🐛 자동 복구 실행 (갤러리 로드 후)
   useEffect(() => {
