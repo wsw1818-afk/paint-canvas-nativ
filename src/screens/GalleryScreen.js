@@ -3,27 +3,62 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 
-// 🐛 썸네일 이미지 컴포넌트 - 로드 실패 시 자동 fallback
-function ThumbnailImage({ uri, fallbackUri, puzzleId }) {
+// 🐛 썸네일 이미지 컴포넌트 - 로드 실패 시 자동 fallback + 파일 존재 확인
+function ThumbnailImage({ uri, fallbackUri, puzzleId, progress }) {
   const [currentUri, setCurrentUri] = useState(uri);
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
-    setCurrentUri(uri);
-    setHasError(false);
-  }, [uri]);
+    // 🐛 파일 존재 여부 확인 (file:// URI인 경우)
+    const checkAndSetUri = async () => {
+      if (uri?.startsWith('file://')) {
+        try {
+          const info = await FileSystem.getInfoAsync(uri);
+          if (!info.exists) {
+            console.warn(`[GalleryScreen] ⚠️ 파일 없음 [${puzzleId}]:`, uri?.substring(0, 60));
+            // 파일이 없으면 바로 fallback 사용
+            if (fallbackUri && fallbackUri !== uri) {
+              console.log(`[GalleryScreen] 🔄 파일 없음 → fallback [${puzzleId}]`);
+              setCurrentUri(fallbackUri);
+              setHasError(true);
+              return;
+            }
+          } else {
+            console.log(`[GalleryScreen] ✅ 파일 존재 [${puzzleId}]: ${(info.size / 1024).toFixed(1)}KB`);
+          }
+        } catch (err) {
+          console.warn(`[GalleryScreen] ❌ 파일 체크 실패 [${puzzleId}]:`, err.message);
+        }
+      }
+      console.log(`[GalleryScreen] 📸 썸네일 설정 [${puzzleId}]:`, uri?.substring(0, 50) + '...', 'progress:', progress);
+      setCurrentUri(uri);
+      setHasError(false);
+    };
+
+    checkAndSetUri();
+  }, [uri, puzzleId, progress, fallbackUri]);
 
   const handleError = (e) => {
-    if (!hasError && fallbackUri && fallbackUri !== uri) {
-      console.warn('[GalleryScreen] 썸네일 로드 실패, fallback 사용:', puzzleId);
+    console.warn(`[GalleryScreen] ❌ 썸네일 로드 실패 [${puzzleId}]:`, e.nativeEvent?.error);
+    console.warn(`[GalleryScreen] ❌ 현재 URI:`, currentUri?.substring(0, 50));
+    console.warn(`[GalleryScreen] ❌ fallbackUri:`, fallbackUri?.substring(0, 50));
+    
+    if (!hasError && fallbackUri && fallbackUri !== currentUri) {
+      console.log(`[GalleryScreen] 🔄 fallback 사용 [${puzzleId}]:`, fallbackUri?.substring(0, 50) + '...');
       setCurrentUri(fallbackUri);
       setHasError(true);
     } else {
-      console.warn('[GalleryScreen] 썸네일 로드 실패 (fallback 없음):', puzzleId, e.nativeEvent?.error);
+      console.warn('[GalleryScreen] ⚠️ 썸네일 로드 실패 (fallback 없음 또는 이미 시도함):', puzzleId);
     }
   };
+
+  if (!currentUri) {
+    console.warn(`[GalleryScreen] ⚠️ URI가 없음 [${puzzleId}]`);
+    return <View style={[styles.thumbnailImage, { backgroundColor: SpotifyColors.backgroundElevated }]} />;
+  }
 
   return (
     <Image
@@ -357,6 +392,17 @@ export default function GalleryScreen({ navigation }) {
                 ? puzzle.progressThumbnailUri
                 : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
 
+            // 🐛 디버깅: 어떤 타입의 이미지를 사용하는지 확인
+            const imageType = puzzle.completedImageUri ? 'COMPLETED' 
+              : puzzle.progressThumbnailUri ? 'PROGRESS' 
+              : puzzle.thumbnailUri ? 'THUMBNAIL' 
+              : puzzle.imageUri ? 'IMAGE' 
+              : 'BASE64';
+            
+            if ((puzzle.progress || 0) >= 100) {
+              console.log(`[GalleryScreen] 🔍 [${puzzle.id}] 타입: ${imageType}, completedImageUri: ${puzzle.completedImageUri ? '있음' : '없음'}, URI: ${thumbnailUri?.substring(0, 40)}...`);
+            }
+
             // Fallback 이미지 우선순위 (completedImageUri 로드 실패 시 사용)
             const fallbackUri = puzzle.progressThumbnailUri
               || puzzle.thumbnailUri
@@ -372,9 +418,11 @@ export default function GalleryScreen({ navigation }) {
                   {/* 이미지 썸네일 - WEAVE 모드면 위빙 미리보기, 아니면 원본 */}
                   <View style={styles.thumbnailContainer}>
                     <ThumbnailImage
+                      key={`thumb-${puzzle.id}`}
                       uri={thumbnailUri}
                       fallbackUri={fallbackUri}
                       puzzleId={puzzle.id}
+                      progress={puzzle.progress}
                     />
                     {/* 진행 썸네일이 없고 완성도가 100% 미만일 때만 음영 오버레이 표시 */}
                     {/* 🐛 버그 수정: 100% 완료된 퍼즐은 음영 표시 안함 (completedImageUri 유무와 관계없이) */}

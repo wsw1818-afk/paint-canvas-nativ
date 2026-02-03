@@ -464,10 +464,16 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     hasCompletedRef.current = true;
 
     console.log('🎉 100% 완성! 캔버스 캡처 시작...');
+    console.log('[captureAndSaveCompletion] puzzleId:', puzzleId);
+    console.log('[captureAndSaveCompletion] filledCells.size:', filledCells?.size);
+    console.log('[captureAndSaveCompletion] gridSize:', gridSize);
+    console.log('[captureAndSaveCompletion] totalCells:', gridSize * gridSize);
 
     try {
       // Native 캡처 호출 (512x512 PNG)
+      console.log('[captureAndSaveCompletion] captureCanvas(512) 호출...');
       const base64Image = captureCanvas(512);
+      console.log('[captureAndSaveCompletion] captureCanvas 결과:', base64Image ? `Base64 length: ${base64Image.length}` : 'null');
 
       if (base64Image) {
         // Base64를 파일로 저장
