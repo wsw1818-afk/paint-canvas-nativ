@@ -4,6 +4,37 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+
+// 🐛 썸네일 이미지 컴포넌트 - 로드 실패 시 자동 fallback
+function ThumbnailImage({ uri, fallbackUri, puzzleId }) {
+  const [currentUri, setCurrentUri] = useState(uri);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setCurrentUri(uri);
+    setHasError(false);
+  }, [uri]);
+
+  const handleError = (e) => {
+    if (!hasError && fallbackUri && fallbackUri !== uri) {
+      console.warn('[GalleryScreen] 썸네일 로드 실패, fallback 사용:', puzzleId);
+      setCurrentUri(fallbackUri);
+      setHasError(true);
+    } else {
+      console.warn('[GalleryScreen] 썸네일 로드 실패 (fallback 없음):', puzzleId, e.nativeEvent?.error);
+    }
+  };
+
+  return (
+    <Image
+      source={{ uri: currentUri }}
+      style={styles.thumbnailImage}
+      resizeMode="cover"
+      fadeDuration={0}
+      onError={handleError}
+    />
+  );
+}
 import { showPuzzleSelectAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import TexturePickerModal from '../components/TexturePickerModal';
@@ -326,6 +357,12 @@ export default function GalleryScreen({ navigation }) {
                 ? puzzle.progressThumbnailUri
                 : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
 
+            // Fallback 이미지 우선순위 (completedImageUri 로드 실패 시 사용)
+            const fallbackUri = puzzle.progressThumbnailUri
+              || puzzle.thumbnailUri
+              || puzzle.imageUri
+              || puzzle.imageBase64;
+
             return (
               <View key={puzzle.id} style={styles.puzzleCard}>
                 <TouchableOpacity
@@ -334,15 +371,14 @@ export default function GalleryScreen({ navigation }) {
                 >
                   {/* 이미지 썸네일 - WEAVE 모드면 위빙 미리보기, 아니면 원본 */}
                   <View style={styles.thumbnailContainer}>
-                    <Image
-                      source={{ uri: thumbnailUri }}
-                      style={styles.thumbnailImage}
-                      resizeMode="cover"
-                      fadeDuration={0}
+                    <ThumbnailImage
+                      uri={thumbnailUri}
+                      fallbackUri={fallbackUri}
+                      puzzleId={puzzle.id}
                     />
                     {/* 진행 썸네일이 없고 완성도가 100% 미만일 때만 음영 오버레이 표시 */}
-                    {/* 🐛 버그 수정: progress가 소수점으로 저장될 수 있으므로 Math.round 사용 */}
-                    {!puzzle.progressThumbnailUri && Math.round(puzzle.progress || 0) < 100 && (
+                    {/* 🐛 버그 수정: 100% 완료된 퍼즐은 음영 표시 안함 (completedImageUri 유무와 관계없이) */}
+                    {Math.round(puzzle.progress || 0) < 100 && !puzzle.progressThumbnailUri && (
                       <View style={styles.thumbnailShadowOverlay} />
                     )}
                   </View>
