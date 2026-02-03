@@ -86,9 +86,6 @@ export default function GalleryScreen({ navigation }) {
   const [showTextureModal, setShowTextureModal] = useState(false);
   const [pendingPuzzle, setPendingPuzzle] = useState(null);  // 텍스처 선택 후 시작할 퍼즐
 
-  // 🐛 자동 복구 대상 퍼즐 목록 상태 (loadSavedPuzzles보다 먼저 선언해야 함)
-  const [puzzlesToRepair, setPuzzlesToRepair] = useState([]);
-  const isAutoRepairing = useRef(false);
 
   // 🌐 언어 변경 리스너
   useEffect(() => {
@@ -152,10 +149,9 @@ export default function GalleryScreen({ navigation }) {
 
       setPuzzles(validatedPuzzles);
 
-      // 🐛 자동 복구 대상이 있으면 복구 시작 (기존 복구 중이 아닐 때만)
-      if (needsRepair.length > 0 && !isAutoRepairing.current) {
+      // 🐛 자동 복구 대상이 있으면 로그만 남김 (실제 복구는 퍼즐 클릭 시 처리)
+      if (needsRepair.length > 0) {
         console.log(`[GalleryScreen] 🔧 자동 복구 대상 ${needsRepair.length}개 발견`);
-        setPuzzlesToRepair(needsRepair);
       }
 
       // 데이터 로드 완료 후 페이드인 애니메이션
@@ -246,47 +242,6 @@ export default function GalleryScreen({ navigation }) {
     );
   };
 
-  // 🐛 자동 복구 실행 (갤러리 로드 후)
-  useEffect(() => {
-    if (puzzlesToRepair.length > 0 && !isAutoRepairing.current) {
-      isAutoRepairing.current = true;
-      const puzzle = puzzlesToRepair[0];
-      console.log(`[GalleryScreen] 🔧 자동 복구 시작: ${puzzle.id} (${puzzle.title})`);
-
-      // 자동으로 Play 화면으로 이동하여 캡처
-      const completionMode = puzzle.completionMode || 'ORIGINAL';
-      const textureUri = puzzle.textureUri || null;
-
-      navigation.navigate('Play', {
-        puzzleId: puzzle.id,
-        imageUri: puzzle.imageUri || puzzle.imageBase64,
-        colorCount: puzzle.colorCount,
-        gridSize: puzzle.gridSize,
-        gridColors: puzzle.gridColors,
-        dominantColors: puzzle.dominantColors,
-        completionMode: completionMode,
-        textureUri: textureUri,
-        isAutoRecapture: true  // 🐛 자동 복구 플래그 (광고 없이, 캡처 후 자동 복귀)
-      });
-    }
-  }, [puzzlesToRepair, navigation]);
-
-  // 🐛 화면 포커스 시 복구 상태 업데이트
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      // 자동 복구 후 돌아왔으면 다음 퍼즐 처리
-      if (isAutoRepairing.current && puzzlesToRepair.length > 0) {
-        console.log(`[GalleryScreen] 🔧 자동 복구 완료, 남은 퍼즐: ${puzzlesToRepair.length - 1}`);
-        const remaining = puzzlesToRepair.slice(1);
-        setPuzzlesToRepair(remaining);
-        isAutoRepairing.current = false;
-
-        // 갤러리 새로고침
-        loadSavedPuzzles();
-      }
-    });
-    return unsubscribe;
-  }, [navigation, puzzlesToRepair]);
 
   // 🎨 텍스처 선택 완료 핸들러
   const handleTextureSelect = useCallback((texture) => {
