@@ -110,7 +110,29 @@ export default function GalleryScreen({ navigation }) {
   const loadSavedPuzzles = async () => {
     try {
       const savedPuzzles = await loadPuzzles();
-      setPuzzles(savedPuzzles);
+
+      // 🐛 completedImageUri 파일 존재 여부 확인 - 파일이 없으면 null로 설정
+      // 이렇게 하면 📷 버튼이 표시되어 재생성 가능
+      const validatedPuzzles = await Promise.all(
+        savedPuzzles.map(async (puzzle) => {
+          if (puzzle.completedImageUri) {
+            try {
+              const info = await FileSystem.getInfoAsync(puzzle.completedImageUri);
+              if (!info.exists) {
+                console.warn(`[GalleryScreen] 🗑️ 완성 이미지 파일 없음 → null 처리 [${puzzle.id}]`);
+                // DB도 업데이트 (다음 로드 시 다시 체크 안 하도록)
+                updatePuzzle(puzzle.id, { completedImageUri: null }).catch(() => {});
+                return { ...puzzle, completedImageUri: null };
+              }
+            } catch (err) {
+              console.warn(`[GalleryScreen] ❌ 파일 체크 실패 [${puzzle.id}]:`, err.message);
+            }
+          }
+          return puzzle;
+        })
+      );
+
+      setPuzzles(validatedPuzzles);
 
       // 데이터 로드 완료 후 페이드인 애니메이션
       Animated.timing(fadeAnim, {
