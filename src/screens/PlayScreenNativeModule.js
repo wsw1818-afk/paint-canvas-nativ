@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition, clearProgressForGame } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { updatePuzzle } from '../utils/puzzleStorage';
+import { updatePuzzle, getPuzzleById } from '../utils/puzzleStorage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
@@ -651,13 +651,23 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     const totalCells = gridSize * gridSize;
     const correctCells = nativeFilledCells - (nativeWrongCells || 0);
     const progress = Math.round((correctCells / totalCells) * 100);
-    
+
     if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
-      console.log('[PlayScreen] 🎉 100% 완료 퍼즐 감지! 완성 이미지 캡처 시작...');
-      // 약간의 지연 후 캡처 (Native 캔버스 완전히 준비될 때까지)
-      setTimeout(() => {
-        captureAndSaveCompletion();
-      }, 1000);
+      // 🐛 기존 completedImageUri 확인 - 이미 있으면 캡처 생략
+      getPuzzleById(puzzleId).then(puzzleData => {
+        if (puzzleData?.completedImageUri) {
+          console.log('[PlayScreen] ✅ 기존 완성 이미지 존재, 캡처 생략:', puzzleData.completedImageUri);
+          hasCompletedRef.current = true;  // 중복 캡처 방지
+        } else {
+          console.log('[PlayScreen] 🎉 100% 완료 퍼즐 감지! 완성 이미지 캡처 시작...');
+          // 약간의 지연 후 캡처 (Native 캔버스 완전히 준비될 때까지)
+          setTimeout(() => {
+            captureAndSaveCompletion();
+          }, 1000);
+        }
+      }).catch(err => {
+        console.error('[PlayScreen] ❌ 퍼즐 데이터 로드 실패:', err);
+      });
     }
   }, [gridSize, puzzleId, captureAndSaveCompletion]);
 

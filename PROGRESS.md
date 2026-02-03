@@ -6,7 +6,7 @@
 
 ## 2026-02-02 작업 내역
 
-### 완료된 수정 (9개)
+### 완료된 수정 (10개)
 
 | 파일 | 수정 내용 |
 |------|----------|
@@ -19,6 +19,7 @@
 | [GalleryScreen.js:282-291](src/screens/GalleryScreen.js) | 🐛 썸네일 우선순위에 `completedImageUri` 1순위 추가 (100% 완성 퍼즐 흐릿함 버그 수정) |
 | [GalleryScreen.js:138-168,338-346](src/screens/GalleryScreen.js) | 🐛 완성 이미지 재생성 기능 추가 (📷 버튼 + `handleRecaptureCompletion`) |
 | [PlayScreenNativeModule.js:637-651](src/screens/PlayScreenNativeModule.js) | 🐛 100% 완료 퍼즐 자동 캡처 로직 추가 (`handleCanvasReady`에 완성 이미지 체크) |
+| [PlayScreenNativeModule.js:7,650-670](src/screens/PlayScreenNativeModule.js) | 🐛 기존 `completedImageUri` 존재 시 중복 캡처 방지 (`getPuzzleById`로 확인) |
 
 ### 검증 완료 - 이슈 아님 (2개)
 
@@ -49,8 +50,15 @@
 #### 1. 자동 복구 (PlayScreen)
 ```javascript
 // handleCanvasReady에서 100% 완료 + 이미지 없음 감지 시 자동 캡처
+// 🐛 기존 completedImageUri가 있으면 캡처 생략 (중복 캡처 방지)
 if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
-  setTimeout(() => captureAndSaveCompletion(), 1000);
+  getPuzzleById(puzzleId).then(puzzleData => {
+    if (puzzleData?.completedImageUri) {
+      hasCompletedRef.current = true;  // 중복 캡처 방지
+    } else {
+      setTimeout(() => captureAndSaveCompletion(), 1000);
+    }
+  });
 }
 ```
 
@@ -70,7 +78,7 @@ if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
 - **캐시 정리**: `.expo`, `node_modules\.cache`, `android\app\build`, `android\.gradle` 4종 삭제
 - **빌드 명령**: `gradlew.bat clean assembleRelease`
 - **빌드 시간**: 4분 33초
-- **포함된 수정**: 9개 버그 수정 전체 반영
+- **포함된 수정**: 10개 버그 수정 전체 반영
 
 ---
 
