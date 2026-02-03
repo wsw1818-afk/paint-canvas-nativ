@@ -111,28 +111,48 @@ export default function GalleryScreen({ navigation }) {
     try {
       const savedPuzzles = await loadPuzzles();
 
-      // 🐛 completedImageUri 파일 존재 여부 확인 - 파일이 없으면 null로 설정
-      // 이렇게 하면 📷 버튼이 표시되어 재생성 가능
+      // 🐛 completedImageUri 파일 존재 여부 확인 및 자동 복구 대상 수집
+      const needsRepair = [];
       const validatedPuzzles = await Promise.all(
         savedPuzzles.map(async (puzzle) => {
+          const progress = Math.round(puzzle.progress || 0);
+
+          // Case 1: completedImageUri가 있지만 파일이 없는 경우
           if (puzzle.completedImageUri) {
             try {
               const info = await FileSystem.getInfoAsync(puzzle.completedImageUri);
               if (!info.exists) {
-                console.warn(`[GalleryScreen] 🗑️ 완성 이미지 파일 없음 → null 처리 [${puzzle.id}]`);
-                // DB도 업데이트 (다음 로드 시 다시 체크 안 하도록)
+                console.warn(`[GalleryScreen] 🗑️ 완성 이미지 파일 없음 → 복구 대상 [${puzzle.id}]`);
+                // DB도 업데이트
                 updatePuzzle(puzzle.id, { completedImageUri: null }).catch(() => {});
+
+                // 100% 완료된 퍼즐이면 자동 복구 대상에 추가
+                if (progress >= 100) {
+                  needsRepair.push({ ...puzzle, completedImageUri: null });
+                }
                 return { ...puzzle, completedImageUri: null };
               }
             } catch (err) {
               console.warn(`[GalleryScreen] ❌ 파일 체크 실패 [${puzzle.id}]:`, err.message);
             }
           }
+          // Case 2: 100% 완료인데 completedImageUri가 아예 없는 경우
+          else if (progress >= 100 && !puzzle.completedImageUri) {
+            console.warn(`[GalleryScreen] 🔧 100% 완료 + 이미지 없음 → 복구 대상 [${puzzle.id}]`);
+            needsRepair.push(puzzle);
+          }
+
           return puzzle;
         })
       );
 
       setPuzzles(validatedPuzzles);
+
+      // 🐛 자동 복구 대상이 있으면 복구 시작 (기존 복구 중이 아닐 때만)
+      if (needsRepair.length > 0 && !isAutoRepairing.current) {
+        console.log(`[GalleryScreen] 🔧 자동 복구 대상 ${needsRepair.length}개 발견`);
+        setPuzzlesToRepair(needsRepair);
+      }
 
       // 데이터 로드 완료 후 페이드인 애니메이션
       Animated.timing(fadeAnim, {
@@ -222,41 +242,51 @@ export default function GalleryScreen({ navigation }) {
     );
   };
 
-  // 🐛 완성 이미지 재생성 핸들러
-  const handleRecaptureCompletion = (puzzle) => {
-    Alert.alert(
-      '완성 이미지 재생성',
-      `"${puzzle.title || '제목 없음'}"의 완성 이미지를 다시 생성하시겠습니까?\n\n퍼즐을 다시 열어 완성 이미지를 자동으로 캡처합니다.`,
-      [
-        {
-          text: '취소',
-          style: 'cancel'
-        },
-        {
-          text: '재생성',
-          onPress: () => {
-            // 퍼즐을 Play 화면으로 열기 (isRecapture 플래그 전달)
-            const completionMode = puzzle.completionMode || 'ORIGINAL';
-            const textureUri = puzzle.textureUri || null;
-            
-            showPuzzleSelectAd(() => {
-              navigation.navigate('Play', {
-                puzzleId: puzzle.id,
-                imageUri: puzzle.imageUri || puzzle.imageBase64,
-                colorCount: puzzle.colorCount,
-                gridSize: puzzle.gridSize,
-                gridColors: puzzle.gridColors,
-                dominantColors: puzzle.dominantColors,
-                completionMode: completionMode,
-                textureUri: textureUri,
-                isRecapture: true  // 🐛 완성 이미지 재생성 플래그
-              });
-            });
-          }
-        }
-      ]
-    );
-  };
+  // 🐛 자동 복구 대상 퍼즐 목록 상태
+  const [puzzlesToRepair, setPuzzlesToRepair] = useState([]);
+  const isAutoRepairing = useRef(false);
+
+  // 🐛 자동 복구 실행 (갤러리 로드 후)
+  useEffect(() => {
+    if (puzzlesToRepair.length > 0 && !isAutoRepairing.current) {
+      isAutoRepairing.current = true;
+      const puzzle = puzzlesToRepair[0];
+      console.log(`[GalleryScreen] 🔧 자동 복구 시작: ${puzzle.id} (${puzzle.title})`);
+
+      // 자동으로 Play 화면으로 이동하여 캡처
+      const completionMode = puzzle.completionMode || 'ORIGINAL';
+      const textureUri = puzzle.textureUri || null;
+
+      navigation.navigate('Play', {
+        puzzleId: puzzle.id,
+        imageUri: puzzle.imageUri || puzzle.imageBase64,
+        colorCount: puzzle.colorCount,
+        gridSize: puzzle.gridSize,
+        gridColors: puzzle.gridColors,
+        dominantColors: puzzle.dominantColors,
+        completionMode: completionMode,
+        textureUri: textureUri,
+        isAutoRecapture: true  // 🐛 자동 복구 플래그 (광고 없이, 캡처 후 자동 복귀)
+      });
+    }
+  }, [puzzlesToRepair, navigation]);
+
+  // 🐛 화면 포커스 시 복구 상태 업데이트
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      // 자동 복구 후 돌아왔으면 다음 퍼즐 처리
+      if (isAutoRepairing.current && puzzlesToRepair.length > 0) {
+        console.log(`[GalleryScreen] 🔧 자동 복구 완료, 남은 퍼즐: ${puzzlesToRepair.length - 1}`);
+        const remaining = puzzlesToRepair.slice(1);
+        setPuzzlesToRepair(remaining);
+        isAutoRepairing.current = false;
+
+        // 갤러리 새로고침
+        loadSavedPuzzles();
+      }
+    });
+    return unsubscribe;
+  }, [navigation, puzzlesToRepair]);
 
   // 🎨 텍스처 선택 완료 핸들러
   const handleTextureSelect = useCallback((texture) => {
@@ -474,15 +504,6 @@ export default function GalleryScreen({ navigation }) {
                 </TouchableOpacity>
 
                 <View style={styles.actionButtons}>
-                  {/* 🐛 완성 이미지 재생성 버튼 (100% 완료 + 이미지 누락 시) */}
-                  {Math.round(puzzle.progress || 0) >= 100 && !puzzle.completedImageUri && (
-                    <TouchableOpacity
-                      style={styles.recaptureButton}
-                      onPress={() => handleRecaptureCompletion(puzzle)}
-                    >
-                      <Text style={styles.recaptureButtonText}>📷</Text>
-                    </TouchableOpacity>
-                  )}
                   <TouchableOpacity
                     style={styles.resetButton}
                     onPress={() => handleResetPuzzle(puzzle)}
@@ -654,18 +675,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   deleteButtonText: {
-    fontSize: 20,
-  },
-  // 🐛 완성 이미지 재생성 버튼 스타일
-  recaptureButton: {
-    padding: SpotifySpacing.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: SpotifyColors.primary,
-    borderRadius: SpotifyRadius.md,
-    marginBottom: SpotifySpacing.sm,
-  },
-  recaptureButtonText: {
     fontSize: 20,
   },
   puzzleInfo: {

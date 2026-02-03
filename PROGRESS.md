@@ -7,12 +7,15 @@
 
 ## 2026-02-03 작업 내역
 
-### 완료된 수정 (1개)
+### 완료된 수정 (5개)
 
 | 파일 | 수정 내용 |
 |------|----------|
 | [GalleryScreen.js:344-348](src/screens/GalleryScreen.js) | 🐛 100% 완료 퍼즐 썸네일 음영 오버레이 버그 수정 - 완료된 퍼즐은 progressThumbnailUri 유무와 관계없이 음영 표시 안함 |
 | [GalleryScreen.js:342](src/screens/GalleryScreen.js) | 썸네일 로드 실패 시 onError 핸들러로 디버그 로그 추가 |
+| [GalleryScreen.js:225-258](src/screens/GalleryScreen.js) | 🐛 자동 복구 로직 추가 - 100% 완료 + 이미지 없는 퍼즐 자동으로 Play 화면 이동 후 캡처 |
+| [GalleryScreen.js:476-485](src/screens/GalleryScreen.js) | 📷 버튼 제거 - 자동 복구로 대체 |
+| [PlayScreenNativeModule.js:187,519-542,673-687](src/screens/PlayScreenNativeModule.js) | 🐛 `isAutoRecapture` 플래그 추가 - 자동 복구 시 광고/알림 없이 캡처 후 갤러리 복귀 |
 
 ---
 
@@ -57,26 +60,19 @@
 - 완성 시 `captureCanvas` 실패 또는 `updatePuzzle` 실패
 - 이전 버전에서 완성 이미지 저장 로직이 없었음
 
-### 해결책 (2가지)
+### 해결책 (자동 복구 - 2026-02-03 개선)
 
-#### 1. 자동 복구 (PlayScreen)
-```javascript
-// handleCanvasReady에서 100% 완료 + 이미지 없음 감지 시 자동 캡처
-// 🐛 기존 completedImageUri가 있으면 캡처 생략 (중복 캡처 방지)
-if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
-  getPuzzleById(puzzleId).then(puzzleData => {
-    if (puzzleData?.completedImageUri) {
-      hasCompletedRef.current = true;  // 중복 캡처 방지
-    } else {
-      setTimeout(() => captureAndSaveCompletion(), 1000);
-    }
-  });
-}
-```
+#### GalleryScreen 자동 복구 흐름
+1. `loadSavedPuzzles`에서 100% 완료 + 이미지 없는 퍼즐 목록 수집
+2. 파일이 존재하지 않는 `completedImageUri`도 null 처리 후 복구 대상에 추가
+3. 복구 대상이 있으면 첫 번째 퍼즐을 `isAutoRecapture: true`로 Play 화면 이동
+4. PlayScreen에서 캡처 완료 후 자동으로 갤러리 복귀
+5. 갤러리 focus 시 다음 복구 대상 처리 (순차 반복)
 
-#### 2. 수동 복구 (GalleryScreen)
-- 100% 완료 + 이미지 없는 퍼즐에 📷 버튼 표시
-- 버튼 클릭 시 Play 화면으로 이동하여 자동 캡처
+#### 장점
+- 📷 버튼 없이 자동으로 모든 문제 퍼즐 복구
+- 사용자 개입 없이 백그라운드에서 처리
+- 광고/알림 없이 빠르게 복구
 
 ---
 

@@ -184,12 +184,12 @@ const COLOR_PALETTE = [
 ];
 
 export default function PlayScreenNativeModule({ route, navigation }) {
-  const { puzzleId, imageUri, colorCount = 36, gridSize: paramGridSize, gridColors, dominantColors: paramDominantColors, completionMode: paramCompletionMode, isReset, textureUri: paramTextureUri } = route.params || {};
+  const { puzzleId, imageUri, colorCount = 36, gridSize: paramGridSize, gridColors, dominantColors: paramDominantColors, completionMode: paramCompletionMode, isReset, textureUri: paramTextureUri, isAutoRecapture } = route.params || {};
   const gridSize = paramGridSize || 250; // 기본 250x250 격자 (높은 난이도, 많은 셀)
   const completionMode = paramCompletionMode || 'ORIGINAL'; // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
 
   // 🔍 디버그 로그
-  console.log('[PlayScreen] 🚀 시작 - isReset:', isReset, 'completionMode:', completionMode, 'textureUri:', paramTextureUri);
+  console.log('[PlayScreen] 🚀 시작 - isReset:', isReset, 'completionMode:', completionMode, 'textureUri:', paramTextureUri, 'isAutoRecapture:', isAutoRecapture);
   const { width, height } = useWindowDimensions();
 
   // 🎨 색상 밝기 계산 함수 (힌트 패널 텍스트 색상용)
@@ -515,6 +515,13 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         console.log(`🎁 완성 보상: +${completionReward}P (기본 ${baseReward}P × ${scorePercent}% 점수)`);
         console.log(`   점수: ${currentScore}/${maxScore} (${Math.floor((currentScore / maxScore) * 100)}%)`);
 
+        // 🐛 자동 복구 모드: 캡처 완료 후 갤러리로 자동 복귀 (광고, 알림 생략)
+        if (isAutoRecapture) {
+          console.log('[PlayScreen] 🔧 자동 복구 완료 → 갤러리로 복귀');
+          navigation.goBack();
+          return;
+        }
+
         // 📢 퍼즐 완료 시 전면 광고 표시 후 알림
         showPuzzleCompleteAd(() => {
           Alert.alert(
@@ -525,12 +532,24 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         });
       } else {
         console.warn('⚠️ 캔버스 캡처 실패 (null 반환)');
+        // 🐛 자동 복구 모드: 캡처 실패해도 갤러리로 복귀 (다음 기회에 다시 시도)
+        if (isAutoRecapture) {
+          console.warn('[PlayScreen] ⚠️ 자동 복구 실패 → 갤러리로 복귀');
+          navigation.goBack();
+          return;
+        }
       }
     } catch (error) {
       console.error('❌ 완성 이미지 캡처/저장 실패:', error);
       hasCompletedRef.current = false; // 재시도 가능하도록
+      // 🐛 자동 복구 모드: 에러 발생해도 갤러리로 복귀
+      if (isAutoRecapture) {
+        console.error('[PlayScreen] ❌ 자동 복구 에러 → 갤러리로 복귀');
+        navigation.goBack();
+        return;
+      }
     }
-  }, [puzzleId]);
+  }, [puzzleId, isAutoRecapture, navigation]);
 
   // 🖼️ 진행 썸네일 캡처 (갤러리에서 진행 상황 표시용)
   // 원본 이미지 위에 색칠된 부분만 오버레이 (참조 앱 스타일)
@@ -659,6 +678,15 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     const progress = Math.round((correctCells / totalCells) * 100);
 
     if (progress >= 100 && puzzleId && !hasCompletedRef.current) {
+      // 🐛 자동 복구 모드: 즉시 캡처 시작 (기존 이미지 체크 생략)
+      if (isAutoRecapture) {
+        console.log('[PlayScreen] 🔧 자동 복구 모드 - 즉시 캡처 시작...');
+        setTimeout(() => {
+          captureAndSaveCompletion();
+        }, 500);  // 더 빠르게 시작 (자동 복구용)
+        return;
+      }
+
       // 🐛 기존 completedImageUri 확인 - 이미 있으면 캡처 생략
       getPuzzleById(puzzleId).then(puzzleData => {
         if (puzzleData?.completedImageUri) {
@@ -675,7 +703,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         console.error('[PlayScreen] ❌ 퍼즐 데이터 로드 실패:', err);
       });
     }
-  }, [gridSize, puzzleId, captureAndSaveCompletion]);
+  }, [gridSize, puzzleId, captureAndSaveCompletion, isAutoRecapture]);
 
   // 🔍 디버그 로그 핸들러 (성능 최적화: 디버그 패널 열릴 때만 활성화)
   const handleDebugLog = useCallback((event) => {
