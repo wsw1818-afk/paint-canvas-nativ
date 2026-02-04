@@ -2516,60 +2516,51 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 }
             }
 
-            // 🐛 100% 완료 + WEAVE 모드: 텍스처를 BitmapShader로 전체 타일링 (격자선 완전 제거)
+            // 🐛 100% 완료 + WEAVE 모드: 정수 배수 크기로 렌더링 후 축소 (격자선 완전 제거)
             if (isComplete && completionMode == "WEAVE") {
                 val pattern = textureBitmap ?: filledCellPatternBitmap
                 if (pattern != null && !pattern.isRecycled) {
-                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 WEAVE 모드: 텍스처 타일링으로 캡처")
+                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 WEAVE 모드: 정수 배수 크기로 렌더링")
 
-                    val outputBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-                    val outputCanvas = Canvas(outputBitmap)
+                    // gridSize의 배수로 캡처하여 셀 크기가 정확히 정수가 되도록 함
+                    val cellSizeInt = (size / gridSize).coerceAtLeast(1)
+                    val captureSize = cellSizeInt * gridSize
 
-                    // 색상별로 셀들을 그룹화
-                    val colorToCells = mutableMapOf<Int, MutableList<Int>>()
-                    for (cellIndex in 0 until (gridSize * gridSize)) {
-                        val color = paintedColorMapInt[cellIndex]
-                        if (color != null) {
-                            colorToCells.getOrPut(color) { mutableListOf() }.add(cellIndex)
+                    val captureBitmap = Bitmap.createBitmap(captureSize, captureSize, Bitmap.Config.ARGB_8888)
+                    val captureCanvas = Canvas(captureBitmap)
+
+                    // 모든 셀 그리기 (정수 좌표로 격자선 방지)
+                    for (row in 0 until gridSize) {
+                        val top = row * cellSizeInt
+                        val rowOffset = row * gridSize
+
+                        for (col in 0 until gridSize) {
+                            val left = col * cellSizeInt
+                            val cellIndex = rowOffset + col
+
+                            val cellColor = paintedColorMapInt[cellIndex]
+                            if (cellColor != null) {
+                                // 텍스처 캐시에서 가져오거나 생성
+                                val texturedBitmap = filledCellTextureCache[cellColor] ?: run {
+                                    val newBitmap = createColoredTexture(pattern, cellColor)
+                                    filledCellTextureCache[cellColor] = newBitmap
+                                    newBitmap
+                                }
+
+                                val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
+                                val dstRect = Rect(left, top, left + cellSizeInt, top + cellSizeInt)
+                                captureCanvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
+                            }
                         }
                     }
 
-                    val cellSize = size.toFloat() / gridSize
-
-                    // 각 색상별로 처리
-                    for ((color, cellIndices) in colorToCells) {
-                        // 해당 색상의 텍스처 생성
-                        val coloredTexture = if (filledCellTextureCache.containsKey(color)) {
-                            filledCellTextureCache[color]!!
-                        } else {
-                            createColoredTexture(pattern, color)
-                        }
-
-                        // BitmapShader 생성 (타일링 모드)
-                        val shader = BitmapShader(coloredTexture, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-
-                        // 셀 크기에 맞게 스케일링
-                        val scaleMatrix = Matrix()
-                        val scaleX = cellSize / coloredTexture.width
-                        val scaleY = cellSize / coloredTexture.height
-                        scaleMatrix.setScale(scaleX, scaleY)
-                        shader.setLocalMatrix(scaleMatrix)
-
-                        val shaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            this.shader = shader
-                        }
-
-                        // 해당 색상의 모든 셀을 하나의 Path로 합쳐서 그리기 (격자선 방지)
-                        val path = Path()
-                        for (cellIndex in cellIndices) {
-                            val row = cellIndex / gridSize
-                            val col = cellIndex % gridSize
-                            val left = col * cellSize
-                            val top = row * cellSize
-                            path.addRect(left, top, left + cellSize, top + cellSize, Path.Direction.CW)
-                        }
-
-                        outputCanvas.drawPath(path, shaderPaint)
+                    // 요청된 크기로 리사이즈
+                    val outputBitmap = if (captureSize != size) {
+                        val scaled = Bitmap.createScaledBitmap(captureBitmap, size, size, true)
+                        captureBitmap.recycle()
+                        scaled
+                    } else {
+                        captureBitmap
                     }
 
                     val outputStream = ByteArrayOutputStream()
@@ -2577,12 +2568,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
                     outputBitmap.recycle()
-                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (WEAVE 타일링): ${size}x${size}")
+                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (WEAVE 정수배수): ${captureSize}→${size}")
                     return base64String
                 }
             }
 
-            // 미완료 또는 fallback: 셀 단위 렌더링 (Float 좌표 + 0.5f 오버랩)
+            // 미완료 또는 fallback: 셀 단위 렌더링
             val cellSize = size.toFloat() / gridSize
 
             // 캡처용 비트맵 생성
