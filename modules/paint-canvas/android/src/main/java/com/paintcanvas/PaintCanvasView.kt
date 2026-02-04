@@ -2498,7 +2498,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         try {
             val totalCells = gridSize * gridSize
-            val paintedCells = paintedColorMapInt.size
+            // 🐛 paintedColorMapInt 대신 filledCellIndices 사용 (저장된 진행 상황 복원 시 paintedColorMapInt는 빈 상태)
+            val paintedCells = filledCellIndices.size
             val isComplete = paintedCells >= totalCells
 
             android.util.Log.w("PaintCanvas", "📸📸📸 captureCanvas 호출됨! painted=$paintedCells, total=$totalCells, complete=$isComplete, mode='$completionMode'")
@@ -2538,7 +2539,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         for (col in 0 until gridSize) {
                             val left = col * cellSizeInt
                             val cellIndex = row * gridSize + col
-                            val cellColor = paintedColorMapInt[cellIndex] ?: continue
+
+                            // 🐛 paintedColorMapInt에 없으면 cells의 targetColorHex 사용 (저장된 진행 상황 복원 시)
+                            val cellColor = paintedColorMapInt[cellIndex]
+                                ?: cells.getOrNull(cellIndex)?.targetColorHex?.let { Color.parseColor(it) }
+                                ?: continue
 
                             // 텍스처 캐시에서 가져오거나 생성
                             val texturedBitmap = filledCellTextureCache[cellColor] ?: run {
