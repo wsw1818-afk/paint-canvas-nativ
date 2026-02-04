@@ -1,61 +1,66 @@
-# PROGRESS.md (현재 진행: 얇게 유지)
+# PROGRESS.md
 
 ## Dashboard
-- Progress: 100%
-- Risk: 낮음
-- Last Update: 2026-02-03
-
-## 2026-02-03 작업 내역
-
-### 완료된 수정 (4개)
-
-| 파일 | 수정 내용 |
-|------|----------|
-| [GalleryScreen.js:436](src/screens/GalleryScreen.js#L436) | 🐛 100% 완료 퍼즐 썸네일 음영 오버레이 버그 수정 - 완료된 퍼즐은 progressThumbnailUri 유무와 관계없이 음영 표시 안함 |
-| [GalleryScreen.js:115-154](src/screens/GalleryScreen.js#L115) | 🐛 `completedImageUri` 파일 존재 여부 검증 - 파일이 없으면 null 처리 + DB 업데이트 |
-| [GalleryScreen.js:461](src/screens/GalleryScreen.js#L461) | 📷 버튼 제거 (크래시 방지를 위해 자동 복구 useEffect도 제거) |
-| [PlayScreenNativeModule.js:662-706](src/screens/PlayScreenNativeModule.js#L662) | 🐛 100% 완료 퍼즐 진입 시 자동 캡처 (`handleCanvasReady`에서 `getPuzzleById`로 기존 이미지 확인 후 캡처) |
-
-### 🟡 제거된 기능 (크래시 방지)
-- **자동 복구 useEffect**: GalleryScreen 로드 시 Play 화면으로 자동 이동하는 로직 제거
-- **이유**: `useState`/`useRef` 선언 순서 문제로 앱 크래시 발생
-- **대안**: 사용자가 100% 완료 퍼즐을 클릭하면 PlayScreen에서 자동 캡처
+- Progress: 🔴 긴급
+- Risk: 높음
+- Last Update: 2026-02-04
 
 ---
 
-## 🐛 완성 이미지 누락 버그 해결책
+## 🚨 현재 이슈: 100% 완성 퍼즐 썸네일에 격자선 표시
 
-### 현재 동작
-1. **GalleryScreen 로드**: `completedImageUri` 파일 존재 여부 검증 → 없으면 null 처리
-2. **사용자가 퍼즐 클릭**: PlayScreen 진입 → 100% 완료 감지 → 자동 캡처
+### 증상
+- 갤러리에서 100% 완료된 WEAVE 모드 퍼즐 썸네일에 **격자선(흰색 선)**이 보임
+- 여러 번 수정 시도했으나 **모두 실패**
 
-### 제한사항
-- 사용자가 퍼즐을 한 번 클릭해야 복구됨 (완전 자동화는 크래시로 제거됨)
+### 원인 분석
+- `captureCanvas()` 함수에서 셀을 float 좌표로 렌더링할 때 **반올림 오차**로 셀 사이에 1px 갭 발생
+- 수정 코드가 적용되지 않는 것처럼 보임 → **디버깅 필요**
+
+### 시도한 수정 (모두 실패)
+
+| 시도 | 방법 | 결과 |
+|-----|------|------|
+| v1 | `drawCapturedCell`에 0.5f 오버랩 추가 | ❌ 격자선 여전히 보임 |
+| v2 | WEAVE 100% 완료 시 BitmapShader로 Path 타일링 | ❌ 격자선 여전히 보임 |
+| v3 | gridSize 배수 크기 + 정수 좌표(Rect) 렌더링 | ❌ 격자선 여전히 보임 |
+| v4 | 원본 코드 복원 후 다시 적용 | ❌ 격자선 여전히 보임 |
+
+### 의심되는 문제점
+1. **`completionMode`가 "WEAVE"로 설정되지 않음** → ORIGINAL 분기로 진입?
+2. **캡처 자체가 실행되지 않음** → 기존 이미지 파일 사용?
+3. **Gradle 캐시 문제** → Kotlin 코드 변경이 반영 안 됨?
+
+### 디버깅 로그 추가됨 (현재 APK)
+```
+📸📸📸 captureCanvas 호출됨! painted=X, total=Y, complete=true/false, mode='WEAVE/ORIGINAL'
+🟢 WEAVE 100% 분기 진입!
+🎨 setCompletionMode: 'WEAVE' (현재: 'ORIGINAL')
+```
+
+### 다음 단계
+1. **adb logcat으로 로그 확인** - `completionMode`가 "WEAVE"인지 확인
+2. 로그 결과에 따라:
+   - mode가 ORIGINAL이면 → JS에서 Native로 전달 과정 확인
+   - mode가 WEAVE인데 격자선이면 → 렌더링 로직 재검토
+   - 로그 자체가 안 나오면 → captureCanvas 호출 자체가 안 됨
+
+---
+
+## 관련 파일
+
+| 파일 | 역할 |
+|-----|------|
+| [PaintCanvasView.kt](modules/paint-canvas/android/src/main/java/com/paintcanvas/PaintCanvasView.kt) | Native 캔버스 렌더링 + `captureCanvas()` |
+| [PlayScreenNativeModule.js](src/screens/PlayScreenNativeModule.js) | Play 화면 + 100% 완료 시 자동 캡처 |
+| [GalleryScreen.js](src/screens/GalleryScreen.js) | 갤러리 화면 + 썸네일 표시 |
 
 ---
 
 ## 아카이브
-- [ARCHIVE_2026_02.md](ARCHIVE_2026_02.md) - 2026-02-02 작업 내역
+- [ARCHIVE_2026_02.md](ARCHIVE_2026_02.md) - 2026-02-02~03 작업 내역
 
 ---
 
-## 릴리즈 상태
-- ✅ 광고: 비활성화 상태 (`null`)
-- ✅ 빌드: Release APK 빌드 완료 (2026-02-03 22:42)
-- ✅ 설치: R3CT31166YK 기기에 설치 완료
-- 📍 배포 경로: `D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-release.apk`
-
-### 빌드 상세
-- **캐시 정리**: `.expo`, `node_modules\.cache`, `android\app\build`, `android\.gradle` 4종 삭제
-- **빌드 명령**: `gradlew.bat clean assembleRelease`
-- **빌드 시간**: 약 3분 36초
-- **포함된 수정**: 파일 검증, 📷 버튼 제거, 자동 캡처 로직
-
----
-
-## Next
-- 🟡 100% 완료 퍼즐 썸네일 버그: 사용자가 퍼즐 클릭해야 복구됨 (완전 자동화 필요 시 재설계 필요)
-
----
 ## Archive Rule
 완료 항목 20개 초과 또는 5KB 초과 시 `ARCHIVE_YYYY_MM.md`로 이동
