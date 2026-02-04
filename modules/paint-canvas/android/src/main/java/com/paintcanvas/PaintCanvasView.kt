@@ -2495,30 +2495,56 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             android.util.Log.d("PaintCanvas", "📸 captureCanvas: paintedCells=$paintedCells, totalCells=$totalCells, isComplete=$isComplete, completionMode=$completionMode")
 
-            // 🐛 100% 완료 + ORIGINAL 모드: 원본 이미지를 통째로 그리기 (격자선 방지)
-            if (isComplete && completionMode == "ORIGINAL") {
-                val sourceBitmap = originalBitmap ?: backgroundBitmap
-                if (sourceBitmap != null) {
-                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 ORIGINAL 모드: 원본 이미지 직접 리사이즈")
+            // 🐛 100% 완료: 격자선 없이 깨끗하게 캡처
+            if (isComplete) {
+                if (completionMode == "ORIGINAL") {
+                    // ORIGINAL 모드: 원본 이미지를 통째로 리사이즈
+                    val sourceBitmap = originalBitmap ?: backgroundBitmap
+                    if (sourceBitmap != null) {
+                        android.util.Log.d("PaintCanvas", "✅ 100% 완료 ORIGINAL 모드: 원본 이미지 직접 리사이즈")
 
-                    // 원본 이미지를 지정 크기로 리사이즈
-                    val outputBitmap = Bitmap.createScaledBitmap(sourceBitmap, size, size, true)
+                        val outputBitmap = Bitmap.createScaledBitmap(sourceBitmap, size, size, true)
 
-                    // Base64로 인코딩
-                    val outputStream = ByteArrayOutputStream()
-                    outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                    val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+                        val outputStream = ByteArrayOutputStream()
+                        outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+                        val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
-                    if (outputBitmap != sourceBitmap) {
-                        outputBitmap.recycle()
+                        if (outputBitmap != sourceBitmap) {
+                            outputBitmap.recycle()
+                        }
+
+                        android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (원본 리사이즈): ${size}x${size}")
+                        return base64String
                     }
+                } else {
+                    // WEAVE 모드: 텍스처 패턴을 전체 이미지에 타일링
+                    val pattern = textureBitmap ?: filledCellPatternBitmap
+                    if (pattern != null && !pattern.isRecycled) {
+                        android.util.Log.d("PaintCanvas", "✅ 100% 완료 WEAVE 모드: 텍스처 타일링")
 
-                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (원본 리사이즈): ${size}x${size}")
-                    return base64String
+                        val outputBitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(outputBitmap)
+
+                        // 텍스처를 타일링하여 전체 캔버스 채우기
+                        val shader = BitmapShader(pattern, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+                        val texturePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            setShader(shader)
+                        }
+                        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), texturePaint)
+
+                        val outputStream = ByteArrayOutputStream()
+                        outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+                        val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+
+                        outputBitmap.recycle()
+
+                        android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (텍스처 타일링): ${size}x${size}")
+                        return base64String
+                    }
                 }
             }
 
-            // 일반 캡처 (미완료 또는 WEAVE 모드)
+            // 일반 캡처 (미완료)
             val captureSize = size.toFloat()
             val captureCellSize = captureSize / gridSize
 

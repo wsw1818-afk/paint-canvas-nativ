@@ -1,5 +1,5 @@
-🐛 완성 이미지 캡처 시 격자선 버그 수정
+🐛 WEAVE 모드 100% 완성 이미지 격자선 버그 수정
 
-- drawCapturedCell에 0.5f 오버랩 추가
-- float 연산 오차로 인한 셀 사이 갭 제거
-- ORIGINAL/WEAVE 모드 모두 수정
+- WEAVE 모드: 텍스처를 BitmapShader로 전체 타일링
+- ORIGINAL 모드: 원본 이미지 직접 리사이즈
+- 셀 단위 렌더링 건너뛰어 격자선 완전 제거
