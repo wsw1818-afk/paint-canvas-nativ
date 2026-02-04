@@ -657,8 +657,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     }
 
     fun setCompletionMode(mode: String) {
+        android.util.Log.d("PaintCanvas", "🎨 setCompletionMode: '$mode' (현재: '$completionMode')")
         if (completionMode == mode) return  // ⚡ 변경 없으면 스킵
         completionMode = mode
+        android.util.Log.d("PaintCanvas", "🎨 completionMode 변경됨: '$completionMode'")
         invalidate()
     }
 
@@ -2493,10 +2495,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             val paintedCells = paintedColorMapInt.size
             val isComplete = paintedCells >= totalCells
 
-            android.util.Log.d("PaintCanvas", "📸 captureCanvas: painted=$paintedCells, total=$totalCells, complete=$isComplete, mode=$completionMode")
+            android.util.Log.w("PaintCanvas", "📸📸📸 captureCanvas 호출됨! painted=$paintedCells, total=$totalCells, complete=$isComplete, mode='$completionMode'")
 
             // 🐛 100% 완료 + ORIGINAL 모드: 원본 이미지 직접 리사이즈 (격자선 완전 방지)
             if (isComplete && completionMode == "ORIGINAL") {
+                android.util.Log.w("PaintCanvas", "🟢 ORIGINAL 100% 분기 진입!")
                 val sourceBitmap = originalBitmap ?: backgroundBitmap
                 if (sourceBitmap != null && !sourceBitmap.isRecycled) {
                     android.util.Log.d("PaintCanvas", "✅ ORIGINAL 100% 완료: 원본 이미지 직접 리사이즈")
@@ -2511,6 +2514,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
             // 🐛 100% 완료 + WEAVE 모드: gridSize 배수 크기로 정수 좌표 렌더링 (격자선 방지)
             if (isComplete && completionMode == "WEAVE") {
+                android.util.Log.w("PaintCanvas", "🟢 WEAVE 100% 분기 진입!")
                 val pattern = textureBitmap ?: filledCellPatternBitmap
                 if (pattern != null && !pattern.isRecycled) {
                     android.util.Log.d("PaintCanvas", "✅ WEAVE 100% 완료: 정수 좌표 렌더링")
