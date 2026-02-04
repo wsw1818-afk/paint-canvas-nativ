@@ -7,15 +7,19 @@
 
 ## 2026-02-03 작업 내역
 
-### 완료된 수정 (5개)
+### 완료된 수정 (4개)
 
 | 파일 | 수정 내용 |
 |------|----------|
-| [GalleryScreen.js:344-348](src/screens/GalleryScreen.js) | 🐛 100% 완료 퍼즐 썸네일 음영 오버레이 버그 수정 - 완료된 퍼즐은 progressThumbnailUri 유무와 관계없이 음영 표시 안함 |
-| [GalleryScreen.js:342](src/screens/GalleryScreen.js) | 썸네일 로드 실패 시 onError 핸들러로 디버그 로그 추가 |
-| [GalleryScreen.js:225-258](src/screens/GalleryScreen.js) | 🐛 자동 복구 로직 추가 - 100% 완료 + 이미지 없는 퍼즐 자동으로 Play 화면 이동 후 캡처 |
-| [GalleryScreen.js:476-485](src/screens/GalleryScreen.js) | 📷 버튼 제거 - 자동 복구로 대체 |
-| [PlayScreenNativeModule.js:187,519-542,673-687](src/screens/PlayScreenNativeModule.js) | 🐛 `isAutoRecapture` 플래그 추가 - 자동 복구 시 광고/알림 없이 캡처 후 갤러리 복귀 |
+| [GalleryScreen.js:444-448](src/screens/GalleryScreen.js) | 🐛 100% 완료 퍼즐 썸네일 음영 오버레이 버그 수정 - 완료된 퍼즐은 progressThumbnailUri 유무와 관계없이 음영 표시 안함 |
+| [GalleryScreen.js:114-154](src/screens/GalleryScreen.js) | 🐛 `completedImageUri` 파일 존재 여부 검증 - 파일이 없으면 null 처리 + DB 업데이트 |
+| [GalleryScreen.js:476](src/screens/GalleryScreen.js) | 📷 버튼 제거 (크래시 방지를 위해 자동 복구 useEffect도 제거) |
+| [PlayScreenNativeModule.js:661-695](src/screens/PlayScreenNativeModule.js) | 🐛 100% 완료 퍼즐 진입 시 자동 캡처 (`handleCanvasReady`에서 `getPuzzleById`로 기존 이미지 확인 후 캡처) |
+
+### 🟡 제거된 기능 (크래시 방지)
+- **자동 복구 useEffect**: GalleryScreen 로드 시 Play 화면으로 자동 이동하는 로직 제거
+- **이유**: `useState`/`useRef` 선언 순서 문제로 앱 크래시 발생
+- **대안**: 사용자가 100% 완료 퍼즐을 클릭하면 PlayScreen에서 자동 캡처
 
 ---
 
@@ -60,38 +64,41 @@
 - 완성 시 `captureCanvas` 실패 또는 `updatePuzzle` 실패
 - 이전 버전에서 완성 이미지 저장 로직이 없었음
 
-### 해결책 (자동 복구 - 2026-02-03 개선)
+### 해결책 (현재 동작 - 2026-02-03)
 
-#### GalleryScreen 자동 복구 흐름
-1. `loadSavedPuzzles`에서 100% 완료 + 이미지 없는 퍼즐 목록 수집
-2. 파일이 존재하지 않는 `completedImageUri`도 null 처리 후 복구 대상에 추가
-3. 복구 대상이 있으면 첫 번째 퍼즐을 `isAutoRecapture: true`로 Play 화면 이동
-4. PlayScreen에서 캡처 완료 후 자동으로 갤러리 복귀
-5. 갤러리 focus 시 다음 복구 대상 처리 (순차 반복)
+#### 1단계: GalleryScreen 로드 시
+1. `loadSavedPuzzles`에서 100% 완료 + 이미지 없는 퍼즐 감지
+2. `completedImageUri` 파일이 존재하지 않으면 → DB에서 null 처리
+3. 로그로 복구 대상 개수 출력 (자동 이동은 하지 않음)
 
-#### 장점
-- 📷 버튼 없이 자동으로 모든 문제 퍼즐 복구
-- 사용자 개입 없이 백그라운드에서 처리
-- 광고/알림 없이 빠르게 복구
+#### 2단계: 사용자가 퍼즐 클릭 시
+1. PlayScreen 진입 → `handleCanvasReady` 호출
+2. 100% 완료 상태 감지 + `getPuzzleById`로 기존 이미지 확인
+3. 이미지가 없으면 자동 `captureAndSaveCompletion()` 실행
+4. 완성 이미지 저장 완료
+
+#### 제한사항
+- 사용자가 퍼즐을 한 번 클릭해야 복구됨 (완전 자동화 아님)
+- 자동 이동 로직은 크래시 문제로 제거됨
 
 ---
 
 ## 릴리즈 상태
 - ✅ 광고: 비활성화 상태 (`null`)
-- ✅ 빌드: Release APK 빌드 완료 (2026-02-02)
-- ✅ 설치: RFCY70SZK9P 기기에 설치 완료
+- ✅ 빌드: Release APK 빌드 완료 (2026-02-03 22:42)
+- ✅ 설치: R3CT31166YK 기기에 설치 완료
 - 📍 배포 경로: `D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-release.apk`
 
 ### 빌드 상세
 - **캐시 정리**: `.expo`, `node_modules\.cache`, `android\app\build`, `android\.gradle` 4종 삭제
 - **빌드 명령**: `gradlew.bat clean assembleRelease`
-- **빌드 시간**: 4분 33초
-- **포함된 수정**: 10개 버그 수정 전체 반영
+- **빌드 시간**: 약 3분 36초
+- **포함된 수정**: 파일 검증, 📷 버튼 제거, 자동 캡처 로직
 
 ---
 
 ## Next
-- 없음 (모든 이슈 수정 완료)
+- 🟡 100% 완료 퍼즐 썸네일 버그: 사용자가 퍼즐 클릭해야 복구됨 (완전 자동화 필요 시 재설계 필요)
 
 ---
 ## Archive Rule
