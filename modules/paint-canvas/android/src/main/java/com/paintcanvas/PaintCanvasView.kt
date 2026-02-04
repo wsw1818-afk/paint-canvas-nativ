@@ -2489,92 +2489,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         try {
-            val totalCells = gridSize * gridSize
-            val paintedCells = paintedColorMapInt.size
-            val isComplete = paintedCells >= totalCells
-
-            android.util.Log.d("PaintCanvas", "📸 captureCanvas: paintedCells=$paintedCells, totalCells=$totalCells, isComplete=$isComplete, completionMode=$completionMode")
-
-            // 🐛 100% 완료 + ORIGINAL 모드: 원본 이미지를 통째로 리사이즈 (격자선 방지)
-            if (isComplete && completionMode == "ORIGINAL") {
-                val sourceBitmap = originalBitmap ?: backgroundBitmap
-                if (sourceBitmap != null) {
-                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 ORIGINAL 모드: 원본 이미지 직접 리사이즈")
-
-                    val outputBitmap = Bitmap.createScaledBitmap(sourceBitmap, size, size, true)
-
-                    val outputStream = ByteArrayOutputStream()
-                    outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                    val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
-
-                    if (outputBitmap != sourceBitmap) {
-                        outputBitmap.recycle()
-                    }
-
-                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (원본 리사이즈): ${size}x${size}")
-                    return base64String
-                }
-            }
-
-            // 🐛 100% 완료 + WEAVE 모드: 정수 배수 크기로 렌더링 후 축소 (격자선 완전 제거)
-            if (isComplete && completionMode == "WEAVE") {
-                val pattern = textureBitmap ?: filledCellPatternBitmap
-                if (pattern != null && !pattern.isRecycled) {
-                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 WEAVE 모드: 정수 배수 크기로 렌더링")
-
-                    // gridSize의 배수로 캡처하여 셀 크기가 정확히 정수가 되도록 함
-                    val cellSizeInt = (size / gridSize).coerceAtLeast(1)
-                    val captureSize = cellSizeInt * gridSize
-
-                    val captureBitmap = Bitmap.createBitmap(captureSize, captureSize, Bitmap.Config.ARGB_8888)
-                    val captureCanvas = Canvas(captureBitmap)
-
-                    // 모든 셀 그리기 (정수 좌표로 격자선 방지)
-                    for (row in 0 until gridSize) {
-                        val top = row * cellSizeInt
-                        val rowOffset = row * gridSize
-
-                        for (col in 0 until gridSize) {
-                            val left = col * cellSizeInt
-                            val cellIndex = rowOffset + col
-
-                            val cellColor = paintedColorMapInt[cellIndex]
-                            if (cellColor != null) {
-                                // 텍스처 캐시에서 가져오거나 생성
-                                val texturedBitmap = filledCellTextureCache[cellColor] ?: run {
-                                    val newBitmap = createColoredTexture(pattern, cellColor)
-                                    filledCellTextureCache[cellColor] = newBitmap
-                                    newBitmap
-                                }
-
-                                val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
-                                val dstRect = Rect(left, top, left + cellSizeInt, top + cellSizeInt)
-                                captureCanvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
-                            }
-                        }
-                    }
-
-                    // 요청된 크기로 리사이즈
-                    val outputBitmap = if (captureSize != size) {
-                        val scaled = Bitmap.createScaledBitmap(captureBitmap, size, size, true)
-                        captureBitmap.recycle()
-                        scaled
-                    } else {
-                        captureBitmap
-                    }
-
-                    val outputStream = ByteArrayOutputStream()
-                    outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                    val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
-
-                    outputBitmap.recycle()
-                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (WEAVE 정수배수): ${captureSize}→${size}")
-                    return base64String
-                }
-            }
-
-            // 미완료 또는 fallback: 셀 단위 렌더링
-            val cellSize = size.toFloat() / gridSize
+            val captureSize = size.toFloat()
+            val captureCellSize = captureSize / gridSize
 
             // 캡처용 비트맵 생성
             val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -2588,41 +2504,39 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 color = Color.BLACK
                 textAlign = Paint.Align.CENTER
                 style = Paint.Style.FILL
-                textSize = cellSize * 0.5f
+                textSize = captureCellSize * 0.5f
             }
             val textYOffset = -(captureTextPaint.descent() + captureTextPaint.ascent()) / 2f
 
             // 모든 셀 그리기
             for (row in 0 until gridSize) {
-                val top = row * cellSize
+                val top = row * captureCellSize
                 val rowOffset = row * gridSize
 
                 for (col in 0 until gridSize) {
-                    val left = col * cellSize
+                    val left = col * captureCellSize
                     val cellIndex = rowOffset + col
 
                     val cellColor = paintedColorMapInt[cellIndex]
 
                     if (cellColor != null) {
-                        // 색칠된 셀 - 완성 모드에 따라 렌더링 (0.5f 오버랩 적용)
-                        drawCapturedCell(canvas, left, top, cellSize, cellColor, row, col)
+                        // 색칠된 셀 - 완성 모드에 따라 렌더링
+                        drawCapturedCell(canvas, left, top, captureCellSize, cellColor, row, col)
                     } else {
                         // 미색칠 셀 - 흰색 배경에 라벨
-                        canvas.drawRect(left, top, left + cellSize, top + cellSize, backgroundClearPaint)
+                        canvas.drawRect(left, top, left + captureCellSize, top + captureCellSize, backgroundClearPaint)
                         val label = labelMapByIndex[cellIndex] ?: "A"
-                        canvas.drawText(label, left + cellSize / 2f, top + cellSize / 2f + textYOffset, captureTextPaint)
+                        canvas.drawText(label, left + captureCellSize / 2f, top + captureCellSize / 2f + textYOffset, captureTextPaint)
                     }
                 }
             }
 
-            val finalBitmap = bitmap
-
             // Base64로 인코딩
             val outputStream = ByteArrayOutputStream()
-            finalBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
             val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
-            finalBitmap.recycle()
+            bitmap.recycle()
             android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료: ${size}x${size}, base64 길이=${base64String.length}")
 
             return base64String
@@ -2711,12 +2625,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     /**
      * 캡처용 셀 렌더링 (완성 모드에 따라 다르게 처리)
-     * 🐛 격자선 방지: 셀 크기에 0.5f 오버랩 추가하여 float 연산 오차로 인한 갭 제거
      */
     private fun drawCapturedCell(canvas: Canvas, left: Float, top: Float, size: Float, color: Int, row: Int, col: Int) {
-        // 🐛 격자선 방지를 위한 오버랩 (마지막 셀 제외)
-        val overlapSize = size + 0.5f
-
         if (completionMode == "ORIGINAL") {
             // ORIGINAL 모드: 원본 이미지 영역 복사
             val bitmap = originalBitmap ?: backgroundBitmap
@@ -2730,13 +2640,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
 
                 val srcRect = Rect(srcLeft, srcTop, srcRight, srcBottom)
-                val dstRect = RectF(left, top, left + overlapSize, top + overlapSize)
+                val dstRect = RectF(left, top, left + size, top + size)
 
                 canvas.drawBitmap(bitmap, srcRect, dstRect, reusableBitmapPaint)
             } else {
                 // 비트맵 없으면 단색
                 reusableBgPaint.color = color
-                canvas.drawRect(left, top, left + overlapSize, top + overlapSize, reusableBgPaint)
+                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
             }
         } else {
             // WEAVE 모드: 텍스처 합성
@@ -2760,12 +2670,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     newBitmap
                 }
                 val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
-                val dstRect = RectF(left, top, left + overlapSize, top + overlapSize)
+                val dstRect = RectF(left, top, left + size, top + size)
                 canvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
             } else {
                 // 패턴 없으면 단색
                 reusableBgPaint.color = color
-                canvas.drawRect(left, top, left + overlapSize, top + overlapSize, reusableBgPaint)
+                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
             }
         }
     }
