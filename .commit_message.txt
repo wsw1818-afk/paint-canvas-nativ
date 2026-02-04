@@ -1,5 +1,5 @@
-🐛 WEAVE 모드 100% 완성 이미지 격자선 버그 수정
+🐛 WEAVE 모드 100% 완성 이미지 격자선 버그 수정 (v2)
 
-- WEAVE 모드: 텍스처를 BitmapShader로 전체 타일링
+- WEAVE 모드: 색상별로 Path 합쳐서 BitmapShader 타일링
 - ORIGINAL 모드: 원본 이미지 직접 리사이즈
-- 셀 단위 렌더링 건너뛰어 격자선 완전 제거
+- drawCapturedCellInt 함수 제거 (흰색 썸네일 문제 해결)
