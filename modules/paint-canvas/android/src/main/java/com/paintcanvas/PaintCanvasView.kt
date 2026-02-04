@@ -2489,6 +2489,36 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         try {
+            val totalCells = gridSize * gridSize
+            val paintedCells = paintedColorMapInt.size
+            val isComplete = paintedCells >= totalCells
+
+            android.util.Log.d("PaintCanvas", "📸 captureCanvas: paintedCells=$paintedCells, totalCells=$totalCells, isComplete=$isComplete, completionMode=$completionMode")
+
+            // 🐛 100% 완료 + ORIGINAL 모드: 원본 이미지를 통째로 그리기 (격자선 방지)
+            if (isComplete && completionMode == "ORIGINAL") {
+                val sourceBitmap = originalBitmap ?: backgroundBitmap
+                if (sourceBitmap != null) {
+                    android.util.Log.d("PaintCanvas", "✅ 100% 완료 ORIGINAL 모드: 원본 이미지 직접 리사이즈")
+
+                    // 원본 이미지를 지정 크기로 리사이즈
+                    val outputBitmap = Bitmap.createScaledBitmap(sourceBitmap, size, size, true)
+
+                    // Base64로 인코딩
+                    val outputStream = ByteArrayOutputStream()
+                    outputBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+                    val base64String = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+
+                    if (outputBitmap != sourceBitmap) {
+                        outputBitmap.recycle()
+                    }
+
+                    android.util.Log.d("PaintCanvas", "✅ 캔버스 캡처 완료 (원본 리사이즈): ${size}x${size}")
+                    return base64String
+                }
+            }
+
+            // 일반 캡처 (미완료 또는 WEAVE 모드)
             val captureSize = size.toFloat()
             val captureCellSize = captureSize / gridSize
 
