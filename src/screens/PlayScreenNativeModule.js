@@ -687,21 +687,11 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         return;
       }
 
-      // 🐛 기존 completedImageUri 확인 - 이미 있으면 캡처 생략
-      getPuzzleById(puzzleId).then(puzzleData => {
-        if (puzzleData?.completedImageUri) {
-          console.log('[PlayScreen] ✅ 기존 완성 이미지 존재, 캡처 생략:', puzzleData.completedImageUri);
-          hasCompletedRef.current = true;  // 중복 캡처 방지
-        } else {
-          console.log('[PlayScreen] 🎉 100% 완료 퍼즐 감지! 완성 이미지 캡처 시작...');
-          // 약간의 지연 후 캡처 (Native 캔버스 완전히 준비될 때까지)
-          setTimeout(() => {
-            captureAndSaveCompletion();
-          }, 1000);
-        }
-      }).catch(err => {
-        console.error('[PlayScreen] ❌ 퍼즐 데이터 로드 실패:', err);
-      });
+      // 🐛 100% 완료 퍼즐: 항상 새로 캡처 (격자 버그 수정 반영)
+      console.log('[PlayScreen] 🎉 100% 완료 퍼즐 감지! 완성 이미지 캡처 시작...');
+      setTimeout(() => {
+        captureAndSaveCompletion();
+      }, 1000);
     }
   }, [gridSize, puzzleId, captureAndSaveCompletion, isAutoRecapture]);
 
