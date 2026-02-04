@@ -38,12 +38,20 @@
 🎨 setCompletionMode: 'WEAVE' (현재: 'ORIGINAL')
 ```
 
-### 다음 단계
-1. **adb logcat으로 로그 확인** - `completionMode`가 "WEAVE"인지 확인
-2. 로그 결과에 따라:
-   - mode가 ORIGINAL이면 → JS에서 Native로 전달 과정 확인
-   - mode가 WEAVE인데 격자선이면 → 렌더링 로직 재검토
-   - 로그 자체가 안 나오면 → captureCanvas 호출 자체가 안 됨
+### 최신 수정 (v5) - 2026-02-04 11:31
+**핵심 발견**: 기존 `completedImageUri` 파일에 이미 격자선이 포함되어 있어서, 새로 캡처해도 갤러리에서는 기존 파일을 표시함
+
+**해결책**: GalleryScreen에서 WEAVE 모드 100% 완료 퍼즐의 기존 이미지를 **강제 삭제**
+- 앱 시작 시 WEAVE 100% 퍼즐의 `completedImageUri` 파일 삭제
+- DB에서 `completedImageUri`를 null로 업데이트
+- 사용자가 퍼즐 클릭 시 PlayScreen에서 새로 캡처
+
+### 테스트 방법
+1. 새 APK 설치 (11:31:45)
+2. 앱 실행 → 갤러리 화면 로드
+3. 로그에서 `🔧 WEAVE 100% 완료 → 기존 이미지 삭제` 확인
+4. WEAVE 퍼즐 클릭 → PlayScreen 진입 → 자동 캡처
+5. 갤러리 복귀 → 격자선 없는 썸네일 확인
 
 ---
 
