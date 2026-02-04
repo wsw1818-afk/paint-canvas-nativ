@@ -1,5 +1,5 @@
-🐛 자동 복구 useFocusEffect 문법 오류 수정
+🐛 완성 이미지 캡처 시 격자선 버그 수정
 
-- Arrow Function → 전통적 function 키워드로 변경
-- 템플릿 리터럴 → 문자열 연결로 변경
-- 복수 return → 단일 cleanup 함수로 통합
+- drawCapturedCell에 0.5f 오버랩 추가
+- float 연산 오차로 인한 셀 사이 갭 제거
+- ORIGINAL/WEAVE 모드 모두 수정

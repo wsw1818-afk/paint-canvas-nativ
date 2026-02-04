@@ -2625,8 +2625,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     /**
      * 캡처용 셀 렌더링 (완성 모드에 따라 다르게 처리)
+     * 🐛 격자선 방지: 셀 크기에 0.5f 오버랩 추가하여 float 연산 오차로 인한 갭 제거
      */
     private fun drawCapturedCell(canvas: Canvas, left: Float, top: Float, size: Float, color: Int, row: Int, col: Int) {
+        // 🐛 격자선 방지를 위한 오버랩 (마지막 셀 제외)
+        val overlapSize = size + 0.5f
+
         if (completionMode == "ORIGINAL") {
             // ORIGINAL 모드: 원본 이미지 영역 복사
             val bitmap = originalBitmap ?: backgroundBitmap
@@ -2640,13 +2644,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val srcBottom = ((row + 1) * srcCellHeight).toInt().coerceAtMost(bitmap.height)
 
                 val srcRect = Rect(srcLeft, srcTop, srcRight, srcBottom)
-                val dstRect = RectF(left, top, left + size, top + size)
+                val dstRect = RectF(left, top, left + overlapSize, top + overlapSize)
 
                 canvas.drawBitmap(bitmap, srcRect, dstRect, reusableBitmapPaint)
             } else {
                 // 비트맵 없으면 단색
                 reusableBgPaint.color = color
-                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+                canvas.drawRect(left, top, left + overlapSize, top + overlapSize, reusableBgPaint)
             }
         } else {
             // WEAVE 모드: 텍스처 합성
@@ -2670,12 +2674,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     newBitmap
                 }
                 val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
-                val dstRect = RectF(left, top, left + size, top + size)
+                val dstRect = RectF(left, top, left + overlapSize, top + overlapSize)
                 canvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
             } else {
                 // 패턴 없으면 단색
                 reusableBgPaint.color = color
-                canvas.drawRect(left, top, left + size, top + size, reusableBgPaint)
+                canvas.drawRect(left, top, left + overlapSize, top + overlapSize, reusableBgPaint)
             }
         }
     }
