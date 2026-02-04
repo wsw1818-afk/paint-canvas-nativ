@@ -1,5 +1,5 @@
-🐛 WEAVE 모드 격자선 버그 수정: 기존 이미지 강제 삭제 후 재캡처
+🐛 WEAVE 격자선 버그 v6: 캡처 전용 Paint 추가 (안티앨리어싱 비활성화)
 
-- GalleryScreen: WEAVE 100% 완료 퍼즐의 기존 completedImageUri 삭제
-- PaintCanvasView.kt: WEAVE 모드 정수 좌표 렌더링 유지
-- 기존 격자선 포함 이미지를 새로 캡처한 이미지로 교체
+- PaintCanvasView.kt: captureBitmapPaint 추가 (isFilterBitmap=false, isAntiAlias=false)
+- WEAVE 100% 캡처 시 안티앨리어싱으로 인한 셀 경계 블렌딩 방지
+- GalleryScreen.js: WEAVE 이미지 무조건 삭제 로직 제거 (무한 루프 수정)

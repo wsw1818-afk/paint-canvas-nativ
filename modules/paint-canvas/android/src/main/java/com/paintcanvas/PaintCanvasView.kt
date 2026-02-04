@@ -784,6 +784,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val reusableBitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         isFilterBitmap = true  // 비트맵 스케일링 품질 향상
     }
+    // 🐛 캡처 전용 Paint (안티앨리어싱/필터 비활성화 → 격자선 방지)
+    private val captureBitmapPaint = Paint().apply {
+        isFilterBitmap = false
+        isAntiAlias = false
+        isDither = false
+    }
 
     // Zoom and Pan variables
     private val matrix = Matrix()
@@ -2543,7 +2549,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
                             val srcRect = Rect(0, 0, texturedBitmap.width, texturedBitmap.height)
                             val dstRect = Rect(left, top, left + cellSizeInt, top + cellSizeInt)
-                            captureCanvas.drawBitmap(texturedBitmap, srcRect, dstRect, reusableBitmapPaint)
+                            // 🐛 captureBitmapPaint 사용 (안티앨리어싱 비활성화 → 격자선 방지)
+                            captureCanvas.drawBitmap(texturedBitmap, srcRect, dstRect, captureBitmapPaint)
                         }
                     }
 

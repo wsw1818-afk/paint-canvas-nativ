@@ -116,29 +116,11 @@ export default function GalleryScreen({ navigation }) {
     try {
       const savedPuzzles = await loadPuzzles();
 
-      // 🐛 격자선 버그 수정: 100% 완료된 WEAVE 모드 퍼즐의 completedImageUri 강제 삭제
-      // 기존 이미지에 격자선이 포함되어 있으므로 새로 캡처하도록 함
+      // 🐛 격자선 버그 수정: completedImageUri 검증 및 복구
       const needsRepair = [];
       const validatedPuzzles = await Promise.all(
         savedPuzzles.map(async (puzzle) => {
           const progress = Math.round(puzzle.progress || 0);
-          const isWeaveMode = puzzle.completionMode === 'WEAVE';
-
-          // 🐛 WEAVE 모드 100% 완료 퍼즐: 기존 이미지 삭제하고 새로 캡처 (격자선 버그 수정)
-          if (progress >= 100 && isWeaveMode && puzzle.completedImageUri) {
-            console.warn(`[GalleryScreen] 🔧 WEAVE 100% 완료 → 기존 이미지 삭제 [${puzzle.id}]`);
-            try {
-              // 기존 파일 삭제
-              await FileSystem.deleteAsync(puzzle.completedImageUri, { idempotent: true });
-            } catch (err) {
-              console.warn(`[GalleryScreen] ⚠️ 파일 삭제 실패 [${puzzle.id}]:`, err.message);
-            }
-            // DB 업데이트
-            updatePuzzle(puzzle.id, { completedImageUri: null }).catch(() => {});
-            // 복구 대상에 추가
-            needsRepair.push({ ...puzzle, completedImageUri: null });
-            return { ...puzzle, completedImageUri: null };
-          }
 
           // Case 1: completedImageUri가 있지만 파일이 없는 경우
           if (puzzle.completedImageUri) {

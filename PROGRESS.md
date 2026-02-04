@@ -1,8 +1,8 @@
 # PROGRESS.md
 
 ## Dashboard
-- Progress: 🔴 긴급
-- Risk: 높음
+- Progress: 🟡 테스트 중
+- Risk: 중간
 - Last Update: 2026-02-04
 
 ---
@@ -11,13 +11,14 @@
 
 ### 증상
 - 갤러리에서 100% 완료된 WEAVE 모드 퍼즐 썸네일에 **격자선(흰색 선)**이 보임
-- 여러 번 수정 시도했으나 **모두 실패**
+- 여러 번 수정 시도 후 **v6에서 근본 원인 발견 및 수정**
 
 ### 원인 분석
-- `captureCanvas()` 함수에서 셀을 float 좌표로 렌더링할 때 **반올림 오차**로 셀 사이에 1px 갭 발생
-- 수정 코드가 적용되지 않는 것처럼 보임 → **디버깅 필요**
+1. `reusableBitmapPaint`에 `ANTI_ALIAS_FLAG`와 `isFilterBitmap=true`가 설정됨
+2. 안티앨리어싱으로 인해 셀 경계가 부드럽게 블렌딩 → **1px 흰색 선 발생**
+3. GalleryScreen에서 WEAVE 100% 퍼즐의 이미지를 **무조건 삭제하는 무한 루프** 존재
 
-### 시도한 수정 (모두 실패)
+### 시도한 수정
 
 | 시도 | 방법 | 결과 |
 |-----|------|------|
@@ -25,33 +26,36 @@
 | v2 | WEAVE 100% 완료 시 BitmapShader로 Path 타일링 | ❌ 격자선 여전히 보임 |
 | v3 | gridSize 배수 크기 + 정수 좌표(Rect) 렌더링 | ❌ 격자선 여전히 보임 |
 | v4 | 원본 코드 복원 후 다시 적용 | ❌ 격자선 여전히 보임 |
+| v5 | GalleryScreen에서 WEAVE 이미지 강제 삭제 | ❌ 무한 삭제 루프 발생 |
+| **v6** | **`captureBitmapPaint` 추가 (안티앨리어싱 비활성화)** | 🧪 테스트 중 |
 
-### 의심되는 문제점
-1. **`completionMode`가 "WEAVE"로 설정되지 않음** → ORIGINAL 분기로 진입?
-2. **캡처 자체가 실행되지 않음** → 기존 이미지 파일 사용?
-3. **Gradle 캐시 문제** → Kotlin 코드 변경이 반영 안 됨?
+### v6 수정 내용 (2026-02-04)
 
-### 디버깅 로그 추가됨 (현재 APK)
+**1. PaintCanvasView.kt - 캡처 전용 Paint 객체 추가**
+```kotlin
+// 🐛 캡처 전용 Paint (안티앨리어싱/필터 비활성화 → 격자선 방지)
+private val captureBitmapPaint = Paint().apply {
+    isFilterBitmap = false
+    isAntiAlias = false
+    isDither = false
+}
 ```
-📸📸📸 captureCanvas 호출됨! painted=X, total=Y, complete=true/false, mode='WEAVE/ORIGINAL'
-🟢 WEAVE 100% 분기 진입!
-🎨 setCompletionMode: 'WEAVE' (현재: 'ORIGINAL')
+
+**2. WEAVE 100% 캡처에서 `captureBitmapPaint` 사용**
+```kotlin
+captureCanvas.drawBitmap(texturedBitmap, srcRect, dstRect, captureBitmapPaint)
 ```
 
-### 최신 수정 (v5) - 2026-02-04 11:31
-**핵심 발견**: 기존 `completedImageUri` 파일에 이미 격자선이 포함되어 있어서, 새로 캡처해도 갤러리에서는 기존 파일을 표시함
-
-**해결책**: GalleryScreen에서 WEAVE 모드 100% 완료 퍼즐의 기존 이미지를 **강제 삭제**
-- 앱 시작 시 WEAVE 100% 퍼즐의 `completedImageUri` 파일 삭제
-- DB에서 `completedImageUri`를 null로 업데이트
-- 사용자가 퍼즐 클릭 시 PlayScreen에서 새로 캡처
+**3. GalleryScreen.js - 무조건 삭제 로직 제거**
+- WEAVE 100% 퍼즐의 `completedImageUri`를 무조건 삭제하는 코드 제거
+- 파일이 실제로 없을 때만 복구 대상으로 추가하도록 변경
 
 ### 테스트 방법
-1. 새 APK 설치 (11:31:45)
+1. 새 APK 설치 (`D:\OneDrive\코드작업\결과물\ColorPlay\ColorPlayExpo-debug.apk`)
 2. 앱 실행 → 갤러리 화면 로드
-3. 로그에서 `🔧 WEAVE 100% 완료 → 기존 이미지 삭제` 확인
-4. WEAVE 퍼즐 클릭 → PlayScreen 진입 → 자동 캡처
-5. 갤러리 복귀 → 격자선 없는 썸네일 확인
+3. WEAVE 100% 퍼즐 클릭 → PlayScreen 진입 → 자동 캡처
+4. 로그에서 `🟢 WEAVE 100% 분기 진입!` 확인
+5. 갤러리 복귀 → **격자선 없는 썸네일** 확인
 
 ---
 
