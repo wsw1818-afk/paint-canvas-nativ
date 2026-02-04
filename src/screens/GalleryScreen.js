@@ -175,20 +175,22 @@ export default function GalleryScreen({ navigation }) {
   // 🐛 자동 복구: 화면 포커스 시 복구 대기열 처리
   useFocusEffect(
     useCallback(() => {
+      let interactionHandle = null;
+
       // 복구 대기열이 있고, 네비게이션 중이 아닐 때만 실행
       if (repairQueue.length > 0 && !isNavigatingRef.current && !loading) {
         const puzzle = repairQueue[0];
-        console.log(`[GalleryScreen] 🔧 자동 복구 시작: ${puzzle.id} (남은 ${repairQueue.length}개)`);
+        console.log('[GalleryScreen] 🔧 자동 복구 시작:', puzzle.id, '(남은', repairQueue.length + '개)');
 
         isNavigatingRef.current = true;
 
         // InteractionManager로 UI 렌더링 완료 후 실행 (크래시 방지)
-        const handle = InteractionManager.runAfterInteractions(() => {
+        interactionHandle = InteractionManager.runAfterInteractions(function() {
           const completionMode = puzzle.completionMode || 'ORIGINAL';
           const textureUri = puzzle.textureUri || null;
 
           // 대기열에서 제거
-          setRepairQueue(prev => prev.slice(1));
+          setRepairQueue(function(prev) { return prev.slice(1); });
 
           // Play 화면으로 이동 (자동 복구 모드)
           navigation.navigate('Play', {
@@ -200,18 +202,16 @@ export default function GalleryScreen({ navigation }) {
             dominantColors: puzzle.dominantColors,
             completionMode: completionMode,
             textureUri: textureUri,
-            isAutoRecapture: true  // 자동 복구 플래그
+            isAutoRecapture: true
           });
         });
-
-        return () => {
-          handle.cancel();
-          isNavigatingRef.current = false;
-        };
       }
 
-      // 포커스 해제 시 네비게이션 플래그 초기화
-      return () => {
+      // cleanup 함수 (단일 return)
+      return function() {
+        if (interactionHandle) {
+          interactionHandle.cancel();
+        }
         isNavigatingRef.current = false;
       };
     }, [repairQueue, loading, navigation])

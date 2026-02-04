@@ -1,5 +1,5 @@
-📝 PROGRESS.md 개선 및 아카이브 정리
+🐛 자동 복구 useFocusEffect 문법 오류 수정
 
-- 라인 번호 실제 코드와 동기화 (436, 115-154, 461, 662-706)
-- 2026-02-02 작업 내역 → ARCHIVE_2026_02.md로 이동
-- 파일 크기 5.6KB → 2.7KB로 축소
+- Arrow Function → 전통적 function 키워드로 변경
+- 템플릿 리터럴 → 문자열 연결로 변경
+- 복수 return → 단일 cleanup 함수로 통합
