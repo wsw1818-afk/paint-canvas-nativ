@@ -74,6 +74,7 @@ import { showPuzzleSelectAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import TexturePickerModal from '../components/TexturePickerModal';
 import { TEXTURES } from '../utils/textureStorage';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
@@ -86,6 +87,9 @@ export default function GalleryScreen({ navigation }) {
   const [showTextureModal, setShowTextureModal] = useState(false);
   const [pendingPuzzle, setPendingPuzzle] = useState(null);  // 텍스처 선택 후 시작할 퍼즐
 
+  // 🐛 자동 복구 상태 (컴포넌트 최상단에 선언)
+  const [repairQueue, setRepairQueue] = useState([]);  // 복구 대기열
+  const isNavigatingRef = useRef(false);  // 네비게이션 중복 방지
 
   // 🌐 언어 변경 리스너
   useEffect(() => {
@@ -149,9 +153,10 @@ export default function GalleryScreen({ navigation }) {
 
       setPuzzles(validatedPuzzles);
 
-      // 🐛 자동 복구 대상이 있으면 로그만 남김 (실제 복구는 퍼즐 클릭 시 처리)
+      // 🐛 자동 복구 대상이 있으면 대기열에 추가
       if (needsRepair.length > 0) {
         console.log(`[GalleryScreen] 🔧 자동 복구 대상 ${needsRepair.length}개 발견`);
+        setRepairQueue(needsRepair);
       }
 
       // 데이터 로드 완료 후 페이드인 애니메이션
@@ -166,6 +171,51 @@ export default function GalleryScreen({ navigation }) {
       setLoading(false);
     }
   };
+
+  // 🐛 자동 복구: 화면 포커스 시 복구 대기열 처리
+  useFocusEffect(
+    useCallback(() => {
+      // 복구 대기열이 있고, 네비게이션 중이 아닐 때만 실행
+      if (repairQueue.length > 0 && !isNavigatingRef.current && !loading) {
+        const puzzle = repairQueue[0];
+        console.log(`[GalleryScreen] 🔧 자동 복구 시작: ${puzzle.id} (남은 ${repairQueue.length}개)`);
+
+        isNavigatingRef.current = true;
+
+        // InteractionManager로 UI 렌더링 완료 후 실행 (크래시 방지)
+        const handle = InteractionManager.runAfterInteractions(() => {
+          const completionMode = puzzle.completionMode || 'ORIGINAL';
+          const textureUri = puzzle.textureUri || null;
+
+          // 대기열에서 제거
+          setRepairQueue(prev => prev.slice(1));
+
+          // Play 화면으로 이동 (자동 복구 모드)
+          navigation.navigate('Play', {
+            puzzleId: puzzle.id,
+            imageUri: puzzle.imageUri || puzzle.imageBase64,
+            colorCount: puzzle.colorCount,
+            gridSize: puzzle.gridSize,
+            gridColors: puzzle.gridColors,
+            dominantColors: puzzle.dominantColors,
+            completionMode: completionMode,
+            textureUri: textureUri,
+            isAutoRecapture: true  // 자동 복구 플래그
+          });
+        });
+
+        return () => {
+          handle.cancel();
+          isNavigatingRef.current = false;
+        };
+      }
+
+      // 포커스 해제 시 네비게이션 플래그 초기화
+      return () => {
+        isNavigatingRef.current = false;
+      };
+    }, [repairQueue, loading, navigation])
+  );
 
   const handleDeletePuzzle = async (puzzle) => {
     Alert.alert(
