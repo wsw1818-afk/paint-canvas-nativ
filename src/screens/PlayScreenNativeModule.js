@@ -305,24 +305,21 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 폴드7 접힘/펼침 감지
   // 접힘: 884 x 2208 (가로)
   // 펼침: 1768 x 2208 (가로)
-  // 가로가 1200 이상이면 태블릿 모드
-  const isTablet = width >= 1200;
+  // 🐛 태블릿 모드 비활성화 - 펼침에서도 모바일 레이아웃 사용 (팔레트 크기 문제 해결)
+  const isTablet = false;
 
-  // 🐛 태블릿 팔레트 버튼 크기 (펼침 화면에서 버튼이 넘치는 문제 수정)
-  const TABLET_PALETTE_WIDTH = 80;
-  const TABLET_BUTTON_SIZE = 32;  // 태블릿용 고정 버튼 크기
+  // 🐛 펼침 화면용 팔레트 버튼 크기 동적 계산
+  const dynamicPaletteWidth = width - 16 - 34 - 4 - 16;
+  const dynamicButtonSize = Math.floor((dynamicPaletteWidth - (BUTTONS_PER_ROW - 1) * BUTTON_GAP) / BUTTONS_PER_ROW);
 
   // 캔버스 크기 계산 - 최대화
-  // 태블릿: 높이 우선 (헤더 제외), 너비는 툴바+팔레트 제외
   // 모바일: 헤더 + 팔레트 제외, 최소 여백으로 최대 크기 확보
   const HEADER_HEIGHT = 44; // 헤더 높이 (패딩 6×2 + 테두리 + 내용)
   const PALETTE_AREA_HEIGHT = 132; // 팔레트 영역 전체 (버튼 32×3 + 간격 4×2 + 패딩 6+18 + 테두리 1)
 
-  const canvasSize = isTablet
-    ? Math.min(height - HEADER_HEIGHT - 8, width - TABLET_PALETTE_WIDTH - 80) // 태블릿: 팔레트+툴바 공간 제외
-    : Math.min(
-        width - 8, // 좌우 여백 최소화 (12 → 8)
-        height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4 // 안전 여백 최소화 (8 → 4)
+  const canvasSize = Math.min(
+        width - 8, // 좌우 여백 최소화
+        height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4 // 안전 여백 최소화
       );
 
 
@@ -1167,13 +1164,14 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                 onSelect={colorSelectHandlers.get(color.id)}
                 luminance={colorLuminanceMap.get(color.id)}
                 isCompleted={completedColors.has(color.id)}
+                tabletSize={dynamicButtonSize !== COLOR_BUTTON_SIZE ? dynamicButtonSize : undefined}
               />
             ))}
           </View>
         </View>
       </View>
     );
-  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size, undoPulseAnim, completedColors]);
+  }, [isTablet, selectedColor?.id, actualColors, colorLuminanceMap, colorSelectHandlers, undoMode, wrongCells.size, undoPulseAnim, completedColors, dynamicButtonSize]);
 
   if (isTablet) {
     // 태블릿 레이아웃: 가로 3분할 (툴바 | 캔버스 | 팔레트)
