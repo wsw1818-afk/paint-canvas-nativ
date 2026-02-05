@@ -32,14 +32,18 @@ const COLOR_BUTTON_SIZE = Math.floor((PALETTE_AVAILABLE_WIDTH - (BUTTONS_PER_ROW
 const loadingImage = require('../../assets/loading-image.png');
 
 // ⚡ 최적화: 색상 버튼 컴포넌트 분리 (memo로 불필요한 리렌더링 방지)
-const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted }) => {
+const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted, tabletSize }) => {
   const textColor = luminance > 128 ? '#000' : '#FFF';
   const shadowColor = luminance > 128 ? '#FFF' : '#000';
+  // 🐛 태블릿용 크기 오버라이드
+  const sizeOverride = tabletSize ? { width: tabletSize, height: tabletSize } : null;
+  const fontOverride = tabletSize ? { fontSize: tabletSize > 28 ? 11 : 9 } : null;
 
   return (
     <TouchableOpacity
       style={[
         colorButtonStyles.button,
+        sizeOverride,
         { backgroundColor: color.hex },
         isSelected && colorButtonStyles.selected,
         isCompleted && colorButtonStyles.completed
@@ -49,13 +53,13 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted 
     >
       {/* 완료된 색상은 라벨 숨김, 원색만 표시 */}
       {!isCompleted && (
-        <Text style={[colorButtonStyles.id, { color: textColor, textShadowColor: shadowColor }]}>
+        <Text style={[colorButtonStyles.id, { color: textColor, textShadowColor: shadowColor }, fontOverride]}>
           {color.id}
         </Text>
       )}
       {/* 완료 표시 (체크마크) */}
       {isCompleted && (
-        <Text style={[colorButtonStyles.checkmark, { color: textColor, textShadowColor: shadowColor }]}>
+        <Text style={[colorButtonStyles.checkmark, { color: textColor, textShadowColor: shadowColor }, fontOverride]}>
           ✓
         </Text>
       )}
@@ -65,7 +69,8 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted 
   // isSelected, isCompleted 변경 시에만 리렌더링
   return prev.isSelected === next.isSelected &&
          prev.color.id === next.color.id &&
-         prev.isCompleted === next.isCompleted;
+         prev.isCompleted === next.isCompleted &&
+         prev.tabletSize === next.tabletSize;
 });
 
 const colorButtonStyles = StyleSheet.create({
@@ -303,6 +308,10 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 가로가 1200 이상이면 태블릿 모드
   const isTablet = width >= 1200;
 
+  // 🐛 태블릿 팔레트 버튼 크기 (펼침 화면에서 버튼이 넘치는 문제 수정)
+  const TABLET_PALETTE_WIDTH = 80;
+  const TABLET_BUTTON_SIZE = 32;  // 태블릿용 고정 버튼 크기
+
   // 캔버스 크기 계산 - 최대화
   // 태블릿: 높이 우선 (헤더 제외), 너비는 툴바+팔레트 제외
   // 모바일: 헤더 + 팔레트 제외, 최소 여백으로 최대 크기 확보
@@ -310,7 +319,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const PALETTE_AREA_HEIGHT = 132; // 팔레트 영역 전체 (버튼 32×3 + 간격 4×2 + 패딩 6+18 + 테두리 1)
 
   const canvasSize = isTablet
-    ? Math.min(height - HEADER_HEIGHT - 8, width - 210) // 태블릿: 여백 더 최소화
+    ? Math.min(height - HEADER_HEIGHT - 8, width - TABLET_PALETTE_WIDTH - 80) // 태블릿: 팔레트+툴바 공간 제외
     : Math.min(
         width - 8, // 좌우 여백 최소화 (12 → 8)
         height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4 // 안전 여백 최소화 (8 → 4)
@@ -1104,7 +1113,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
     if (isTablet) {
       return (
         <ScrollView
-          style={styles.paletteContainerTablet}
+          style={[styles.paletteContainerTablet, { width: TABLET_PALETTE_WIDTH }]}
           contentContainerStyle={styles.paletteTablet}
         >
           {actualColors.map((color) => (
@@ -1115,6 +1124,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               onSelect={colorSelectHandlers.get(color.id)}
               luminance={colorLuminanceMap.get(color.id)}
               isCompleted={completedColors.has(color.id)}
+              tabletSize={TABLET_BUTTON_SIZE}
             />
           ))}
         </ScrollView>
@@ -1803,17 +1813,20 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   paletteContainerTablet: {
-    width: 130,
+    // width는 renderPalette에서 동적으로 설정 (TABLET_PALETTE_WIDTH)
     backgroundColor: '#163040',
-    paddingVertical: 12,
-    paddingHorizontal: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     borderLeftWidth: 2,
     borderLeftColor: '#20B2AA',
   },
   paletteTablet: {
-    flexDirection: 'column',
-    gap: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 2,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
