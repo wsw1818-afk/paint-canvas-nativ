@@ -507,7 +507,8 @@ export default function PlayScreenNativeModule({ route, navigation }) {
         // 점수 비율 계산 (10% 단위로 내림)
         // 100% = 100%, 90~99% = 90%, 80~89% = 80%, ...
         const scorePercent = Math.floor((currentScore / maxScore) * 10) * 10;
-        const scoreMultiplier = Math.max(0, Math.min(100, scorePercent)) / 100;
+        // 🐛 최소 10% 보장 (100% 완료했는데 보상 0 방지)
+        const scoreMultiplier = Math.max(10, Math.min(100, scorePercent)) / 100;
 
         // 최종 보상 = 기본 보상 × 점수 비율
         const completionReward = Math.floor(baseReward * scoreMultiplier);
@@ -648,11 +649,21 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       saveProgress();
     }
 
-    // 🔧 cleanup: 언마운트 시 대기 중인 저장 타이머 정리
+    // 🔧 cleanup: 언마운트 시 대기 중인 저장 타이머 정리 + 포인트 즉시 저장
     return () => {
       if (saveProgressRef.current) {
         clearTimeout(saveProgressRef.current);
         saveProgressRef.current = null;
+      }
+      // 🐛 포인트 손실 방지: 언마운트 시 대기 중인 포인트 즉시 저장
+      if (pendingPointsRef.current > 0) {
+        const points = pendingPointsRef.current;
+        pendingPointsRef.current = 0;
+        addPoints(points).catch(() => {});
+      }
+      if (pointsFlushTimerRef.current) {
+        clearTimeout(pointsFlushTimerRef.current);
+        pointsFlushTimerRef.current = null;
       }
     };
   }, [filledCells.size, isCanvasReady, saveProgress]);

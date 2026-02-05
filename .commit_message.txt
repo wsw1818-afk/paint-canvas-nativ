@@ -1,5 +1,1 @@
-🐛 WEAVE 격자선 버그 v6: 캡처 전용 Paint 추가 (안티앨리어싱 비활성화)
-
-- PaintCanvasView.kt: captureBitmapPaint 추가 (isFilterBitmap=false, isAntiAlias=false)
-- WEAVE 100% 캡처 시 안티앨리어싱으로 인한 셀 경계 블렌딩 방지
-- GalleryScreen.js: WEAVE 이미지 무조건 삭제 로직 제거 (무한 루프 수정)
+🐛 버그 리포트 기반 코드 개선: 포인트 손실 방지, 오타 수정, scoreMultiplier 최소값 보장

@@ -245,7 +245,7 @@ export function extractDominantColors(pixels, k = 8) {
     .sort((a, b) => b.count - a.count);
 
   // 5. 너무 비슷한 색상 병합
-  const mergedColors = mergeSimigarColors(sortedResults, 25); // RGB 거리 25 이내 병합
+  const mergedColors = mergeSimilarColors(sortedResults, 25); // RGB 거리 25 이내 병합
 
   console.log(`🔀 병합 후 색상: ${mergedColors.length}개`);
 
@@ -494,7 +494,7 @@ function perceptualDistance(c1, c2) {
  * 비슷한 색상 병합 (Lab 색공간 기반)
  * ★ Delta E 기준 threshold (일반적으로 10 이하가 구분 어려움)
  */
-function mergeSimigarColors(colors, threshold = 15) {
+function mergeSimilarColors(colors, threshold = 15) {
   const merged = [];
 
   for (const color of colors) {
