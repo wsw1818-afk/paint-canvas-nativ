@@ -21,12 +21,13 @@ const adUnitId = null;  // 개발자 테스트용 - 광고 비활성화
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // 🎨 팔레트 버튼 크기 계산 (화면 너비 기반)
-// 화면 너비 - 패딩(16) - 되돌리기버튼(34) - gap(4) - 팔레트패딩(8*2)
 // 한 줄에 9개 버튼, gap 2px
-const PALETTE_AVAILABLE_WIDTH = SCREEN_WIDTH - 16 - 34 - 4 - 16;
+// ⚠️ 갤럭시 폴드 펼침(~2208px) 대응: 최대 36px로 제한
 const BUTTONS_PER_ROW = 9;
 const BUTTON_GAP = 2;
-const COLOR_BUTTON_SIZE = Math.floor((PALETTE_AVAILABLE_WIDTH - (BUTTONS_PER_ROW - 1) * BUTTON_GAP) / BUTTONS_PER_ROW);
+const MAX_BUTTON_SIZE = 36;
+const TABLET_PALETTE_WIDTH = 80;
+const TABLET_BUTTON_SIZE = 32;
 
 // 🖼️ 로딩 화면 이미지
 const loadingImage = require('../../assets/loading-image.png');
@@ -75,8 +76,8 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted,
 
 const colorButtonStyles = StyleSheet.create({
   button: {
-    width: COLOR_BUTTON_SIZE,
-    height: COLOR_BUTTON_SIZE,
+    width: MAX_BUTTON_SIZE,
+    height: MAX_BUTTON_SIZE,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -308,18 +309,19 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 🐛 태블릿 모드 비활성화 - 펼침에서도 모바일 레이아웃 사용 (팔레트 크기 문제 해결)
   const isTablet = false;
 
-  // 🐛 펼침 화면용 팔레트 버튼 크기 동적 계산
+  // 🐛 펼침 화면용 팔레트 버튼 크기 동적 계산 (최대 MAX_BUTTON_SIZE로 cap)
   const dynamicPaletteWidth = width - 16 - 34 - 4 - 16;
-  const dynamicButtonSize = Math.floor((dynamicPaletteWidth - (BUTTONS_PER_ROW - 1) * BUTTON_GAP) / BUTTONS_PER_ROW);
+  const rawButtonSize = Math.floor((dynamicPaletteWidth - (BUTTONS_PER_ROW - 1) * BUTTON_GAP) / BUTTONS_PER_ROW);
+  const dynamicButtonSize = Math.min(rawButtonSize, MAX_BUTTON_SIZE);
 
   // 캔버스 크기 계산 - 최대화
-  // 모바일: 헤더 + 팔레트 제외, 최소 여백으로 최대 크기 확보
-  const HEADER_HEIGHT = 44; // 헤더 높이 (패딩 6×2 + 테두리 + 내용)
-  const PALETTE_AREA_HEIGHT = 132; // 팔레트 영역 전체 (버튼 32×3 + 간격 4×2 + 패딩 6+18 + 테두리 1)
+  const HEADER_HEIGHT = 44;
+  // 팔레트 높이 = 버튼 3줄 + gap 2줄 + 패딩(상6+하18) + 테두리1
+  const PALETTE_AREA_HEIGHT = dynamicButtonSize * 3 + BUTTON_GAP * 2 + 6 + 18 + 1;
 
   const canvasSize = Math.min(
-        width - 8, // 좌우 여백 최소화
-        height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4 // 안전 여백 최소화
+        width - 8,
+        height - HEADER_HEIGHT - PALETTE_AREA_HEIGHT - 4
       );
 
 
@@ -1137,6 +1139,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             <TouchableOpacity
               style={[
                 styles.undoButtonPalette,
+                { height: dynamicButtonSize * 2 + BUTTON_GAP },
                 undoMode && styles.undoButtonActive,
                 wrongCells.size === 0 && !undoMode && styles.undoButtonDisabled
               ]}
@@ -1164,7 +1167,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
                 onSelect={colorSelectHandlers.get(color.id)}
                 luminance={colorLuminanceMap.get(color.id)}
                 isCompleted={completedColors.has(color.id)}
-                tabletSize={dynamicButtonSize !== COLOR_BUTTON_SIZE ? dynamicButtonSize : undefined}
+                tabletSize={dynamicButtonSize}
               />
             ))}
           </View>
@@ -1629,7 +1632,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: SpotifyRadius.sm,
     minWidth: 34,
-    height: COLOR_BUTTON_SIZE * 2 + BUTTON_GAP,
+    height: MAX_BUTTON_SIZE * 2 + BUTTON_GAP,
   },
   palette: {
     flex: 1,
@@ -1641,8 +1644,8 @@ const styles = StyleSheet.create({
     alignContent: 'flex-start',
   },
   colorButton: {
-    width: COLOR_BUTTON_SIZE,
-    height: COLOR_BUTTON_SIZE,
+    width: MAX_BUTTON_SIZE,
+    height: MAX_BUTTON_SIZE,
     borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
