@@ -12,33 +12,35 @@ function ThumbnailImage({ uri, fallbackUri, puzzleId, progress }) {
   const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     // 🐛 파일 존재 여부 확인 (file:// URI인 경우)
     const checkAndSetUri = async () => {
       if (uri?.startsWith('file://')) {
         try {
           const info = await FileSystem.getInfoAsync(uri);
+          if (cancelled) return;
           if (!info.exists) {
             console.warn(`[GalleryScreen] ⚠️ 파일 없음 [${puzzleId}]:`, uri?.substring(0, 60));
             // 파일이 없으면 바로 fallback 사용
             if (fallbackUri && fallbackUri !== uri) {
-              console.log(`[GalleryScreen] 🔄 파일 없음 → fallback [${puzzleId}]`);
               setCurrentUri(fallbackUri);
               setHasError(true);
               return;
             }
-          } else {
-            console.log(`[GalleryScreen] ✅ 파일 존재 [${puzzleId}]: ${(info.size / 1024).toFixed(1)}KB`);
           }
         } catch (err) {
+          if (cancelled) return;
           console.warn(`[GalleryScreen] ❌ 파일 체크 실패 [${puzzleId}]:`, err.message);
         }
       }
-      console.log(`[GalleryScreen] 📸 썸네일 설정 [${puzzleId}]:`, uri?.substring(0, 50) + '...', 'progress:', progress);
+      if (cancelled) return;
       setCurrentUri(uri);
       setHasError(false);
     };
 
     checkAndSetUri();
+    return () => { cancelled = true; };
   }, [uri, puzzleId, progress, fallbackUri]);
 
   const handleError = (e) => {

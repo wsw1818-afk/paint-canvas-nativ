@@ -95,22 +95,28 @@ export const getTranslations = () => translations[currentLanguage] || translatio
  */
 export const t = (key, params = {}) => {
   const keys = key.split('.');
-  let value = translations[currentLanguage] || translations.ko;
 
+  // 현재 언어에서 키 탐색
+  let value = translations[currentLanguage] || translations.ko;
+  let found = true;
   for (const k of keys) {
     if (value && typeof value === 'object' && k in value) {
       value = value[k];
     } else {
-      // 키를 찾지 못하면 기본 언어(한국어)에서 시도
-      value = translations.ko;
-      for (const fallbackKey of keys) {
-        if (value && typeof value === 'object' && fallbackKey in value) {
-          value = value[fallbackKey];
-        } else {
-          return key; // 기본 언어에서도 못 찾으면 키 반환
-        }
-      }
+      found = false;
       break;
+    }
+  }
+
+  // 현재 언어에서 못 찾으면 한국어(기본)로 폴백
+  if (!found) {
+    value = translations.ko;
+    for (const k of keys) {
+      if (value && typeof value === 'object' && k in value) {
+        value = value[k];
+      } else {
+        return key; // 기본 언어에서도 못 찾으면 키 반환
+      }
     }
   }
 

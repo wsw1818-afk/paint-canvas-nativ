@@ -1,1 +1,1 @@
-📱 갤럭시 폴드 펼침 화면 팔레트 v3: 버튼 크기 최대 36px cap + 동적 팔레트 높이 계산
+🐛 버그 리포트 기반 코드 개선: i18n 폴백 로직, isMounted 체크, ThumbnailImage 메모리 누수, K-Means++ 방어코드, assets 안전접근

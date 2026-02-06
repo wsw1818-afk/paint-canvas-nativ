@@ -148,7 +148,7 @@ export default function GenerateScreen({ route, navigation }) {
         });
       }
 
-      if (!result.canceled && result.assets[0]) {
+      if (!result.canceled && result.assets && result.assets.length > 0) {
         setSelectedImage({ uri: result.assets[0].uri });
       }
     } catch (error) {
@@ -220,6 +220,7 @@ export default function GenerateScreen({ route, navigation }) {
       );
 
       // 🖼️ 썸네일 즉시 표시 (체감 속도 향상)
+      if (!isMounted.current) return;
       setPreviewImage(thumbnailImage.uri);
       setLoadingProgress(15);
       console.log('✅ 썸네일 생성 완료:', thumbnailImage.uri);
@@ -231,6 +232,7 @@ export default function GenerateScreen({ route, navigation }) {
         [{ resize: { width: optimizedSize, height: optimizedSize } }],
         { compress: 0.8, format: SaveFormat.JPEG, base64: false }
       );
+      if (!isMounted.current) return;
       setLoadingProgress(30);
       console.log('✅ 리사이즈 완료:', resizedImage.uri);
 
@@ -251,6 +253,7 @@ export default function GenerateScreen({ route, navigation }) {
         from: thumbnailImage.uri,
         to: thumbnailUri
       });
+      if (!isMounted.current) return;
       setLoadingProgress(40);
       console.log('✅ 파일 저장 완료:', permanentUri);
 
@@ -262,6 +265,7 @@ export default function GenerateScreen({ route, navigation }) {
         difficulty.colors,
         optimizedSize
       );
+      if (!isMounted.current) return;
       setLoadingProgress(80);
       console.log('✅ 이미지 처리 완료, gridColors:', processedImage.gridColors?.length);
 
@@ -282,6 +286,7 @@ export default function GenerateScreen({ route, navigation }) {
           console.warn('위빙 미리보기 생성 실패, 원본 사용:', weaveError);
         }
       }
+      if (!isMounted.current) return;
       setLoadingProgress(90);
 
       // 5단계: 퍼즐 데이터 저장
@@ -302,6 +307,7 @@ export default function GenerateScreen({ route, navigation }) {
       };
 
       await savePuzzle(puzzleData);
+      if (!isMounted.current) return;
       setLoadingProgress(100);
       setLoading(false);
       setPreviewImage(null);

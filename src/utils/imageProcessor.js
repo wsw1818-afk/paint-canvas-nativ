@@ -313,6 +313,7 @@ function quantizeColors(pixels, levels = 32) {
  * ★ perceptualDistance 사용으로 인간 시각에 맞는 색상 분포
  */
 function kMeansPlusPlusInit(pixels, k) {
+  if (!pixels || pixels.length === 0) return [];
   const centroids = [];
 
   // 첫 번째 중심점: 가장 빈도 높은 색상
