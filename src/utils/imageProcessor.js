@@ -780,10 +780,8 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
       console.log(`   ${i+1}. ${dominantColors[i]?.hex || '???'}: ${count}개 (${pct}%)`);
     });
 
-    // 4. 알파벳 분포 분산 처리 (같은 색상이 집중되지 않도록)
-    const dispersedGridColors = disperseColorDistribution(gridColors, gridSize, colorCount);
-
-    return { gridColors: dispersedGridColors, dominantColors };
+    // 4. 분산 처리 제거 - 원본 색상 유지 (분산이 잘못된 라벨 할당을 유발하여 "맞게 칠했는데 틀리다"는 버그 발생)
+    return { gridColors, dominantColors };
   } catch (error) {
     console.error('Grid color extraction error:', error);
     // 에러 시 랜덤 색상으로 폴백

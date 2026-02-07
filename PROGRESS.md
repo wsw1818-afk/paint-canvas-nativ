@@ -1,349 +1,168 @@
 # 버그 리포트
 
 > 생성일: 2026-02-05  
+> 최근 업데이트: 2026-02-07  
 > 프로젝트: ColorPlayExpo
 
 ---
 
 ## 🔴 심각한 버그 (Critical)
 
-### 1. 포인트 손실 문제
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 651-658)
+### 1. 포인트 경제 무력화 (강제 초기화 + 과도한 기본값)
+**위치**: `App.js` (line 27), `src/utils/pointsStorage.js` (line 9, 17-20)
 
-**문제**: 컴포넌트 언마운트 시 `pendingPoints`가 저장되지 않고 손실됨
+**문제**: 앱 시작 시 `setPoints(1000000)`로 매번 덮어쓰기 + 기본 포인트가 100만으로 고정.
+- 실제 게임 진행/보상 시스템이 무력화됨
+- 사용자 포인트가 항상 리셋됨
 
-**현재 코드**:
-```javascript
-useEffect(() => {
-  if (isCanvasReady && filledCells.size > 0) {
-    saveProgress();
-  }
-  return () => {
-    if (saveProgressRef.current) {
-      clearTimeout(saveProgressRef.current);
-      saveProgressRef.current = null;
-    }
-  };
-}, [filledCells.size, isCanvasReady, saveProgress]);
-```
-
-**해결안**:
-```javascript
-return () => {
-  if (saveProgressRef.current) {
-    clearTimeout(saveProgressRef.current);
-    saveProgressRef.current = null;
-  }
-  // 포인트 즉시 저장
-  if (pendingPointsRef.current > 0) {
-    const points = pendingPointsRef.current;
-    pendingPointsRef.current = 0;
-    addPoints(points).catch(() => {});
-  }
-};
-```
-
----
-
-### 2. Missing Import - Image
-**위치**: `src/screens/GalleryScreen.js` (line 317)
-
-**문제**: `Image.resolveAssetSource`를 사용하지만 `Image`가 import되지 않음
-
-**현재 코드**:
-```javascript
-const resolved = Image.resolveAssetSource(texture.image);
-```
-
-**해결안**:
-```javascript
-import { Image } from 'react-native'; // 파일 상단에 추가
-```
+**개선안**:
+- `__DEV__`에서만 강제 설정하거나 초기화 루틴에서만 1회 적용
+- `INITIAL_POINTS`를 실제 정책값으로 조정 (예: 0~5000)
 
 ---
 
 ## 🟡 중간 심각도 버그 (Medium)
 
-### 3. useCallback 의존성 누락
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 821-894)
+### 2. GenerateScreen 라우트 파라미터 미검증으로 크래시
+**위치**: `src/screens/GenerateScreen.js` (line 31)
 
-**문제**: `handleCellPainted` 콜백의 의존성 배열에 `filledCells`, `wrongCells` 등 누락
+**문제**: `route.params`가 undefined면 구조분해 시 즉시 크래시.  
+`sourceType`이 없으면 `sample` 경로로 흐르는데, `selectedImage`가 null인 상태에서 `selectedImage.uri` 접근으로 추가 크래시 가능.
 
-**현재 코드**:
-```javascript
-const handleCellPainted = useCallback((event) => {
-  // ... filledCellsRef, wrongCellsRef 사용
-}, [undoMode]); // 🚨 의존성 누락
-```
+**개선안**:
+- `const sourceType = route?.params?.sourceType ?? 'gallery'`로 안전 처리
+- `sample` 모드 사용 시 기본 이미지 세팅 또는 경로 제거
 
-**참고**: Ref를 사용하여 해결하려 했지만, 일부 케이스에서는 여전히 stale closure 문제 가능
+---
+
+### 3. 퍼즐 생성 실패 시 포인트 차감 롤백 없음
+**위치**: `src/screens/GenerateScreen.js` (line 184 이후)
+
+**문제**: `deductPoints` 성공 후 이미지 처리 중 오류가 나면 포인트가 복구되지 않음.
+
+**개선안**:
+- 성공 이후에 포인트 차감하거나
+- 실패 시 `setPoints(pointsCheck.currentPoints)` 등으로 롤백
 
 ---
 
 ### 4. 자동 복구 기능 비활성화
-**위치**: `src/screens/GalleryScreen.js` (line 177-219)
+**위치**: `src/screens/GalleryScreen.js` (useFocusEffect 주석 처리)
 
-**문제**: 100% 완료되었지만 `completedImageUri`가 없는 퍼즐의 자동 복구 기능이 주석 처리됨
+**문제**: 100% 완료 퍼즐인데 `completedImageUri`가 없는 경우 자동 복구가 동작하지 않음.
 
-**코드**:
-```javascript
-// ⚠️ 임시 비활성화 - 크래시 원인 파악 중
-// useFocusEffect(...)
-```
-
-**결과**: 사용자가 완료된 퍼즐을 볼 때 완성 이미지가 표시되지 않을 수 있음
+**개선안**:
+- 크래시 원인 수정 후 `useFocusEffect` 재활성화
+- 복구 큐 처리 시 null guard 강화
 
 ---
 
-### 5. 메모리 누수 가능성
-**위치**: `src/screens/GenerateScreen.js` (line 41, 154-167)
+### 5. 마이그레이션 Race Condition
+**위치**: `src/utils/puzzleStorage.js` (migratePuzzles)
 
-**문제**: `isMounted` 패턴을 사용하지만 일부 비동기 함수에서 체크가 누락
+**문제**: 마이그레이션 중 `AsyncStorage`를 다른 로직이 동시에 갱신하면 데이터 손실 위험.
+
+**개선안**:
+- 락(lock) 또는 단일 실행 보장
+- 마이그레이션 중에는 다른 쓰기 작업 지연
 
 ---
 
 ## 🟢 경미한 버그/개선점 (Low)
 
-### 6. 오타
-**위치**: `src/utils/imageProcessor.js` (line 497)
+### 6. 비동기 로딩 후 언마운트 상태 업데이트 위험
+**위치**:
+- `src/screens/GenerateScreen.js` (loadPoints, handleGenerate catch)
+- `src/screens/GalleryScreen.js` (loadSavedPuzzles)
+- `src/screens/PlayScreenNativeModule.js` (loadProgress)
 
-```javascript
-function mergeSimigarColors(colors, threshold = 15) {
-  //        ^^^^^^^^ "Similar"의 오타
-}
-```
+**문제**: 컴포넌트 언마운트 후 `setState`가 호출될 수 있음.
+
+**개선안**:
+- `cancelled` 플래그나 `AbortController` 도입
+- 언마운트 시 상태 업데이트 방지
 
 ---
 
 ### 7. 광고 카운터 초기화 문제
-**위치**: `src/utils/adManager.js` (line 54-57)
+**위치**: `src/utils/adManager.js` (interactionCounts)
 
-**문제**: 앱 재시작 시 카운터가 0으로 초기화되어 광고 빈도가 예상과 다를 수 있음
+**문제**: 앱 재시작 시 광고 카운터가 0으로 초기화되어 빈도가 불안정.
 
-**개선**: AsyncStorage에 카운터 영구 저장 권장
+**개선안**:
+- `AsyncStorage`에 카운터 영구 저장
 
 ---
 
-### 8. scoreMultiplier 계산 오류 가능성
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 508-510)
+### 8. 포인트 부족 처리 시 NaN 가능성
+**위치**: `src/screens/GenerateScreen.js` (line 186-191)
 
-```javascript
-const scorePercent = Math.floor((currentScore / maxScore) * 10) * 10;
-const scoreMultiplier = Math.max(0, Math.min(100, scorePercent)) / 100;
-```
+**문제**: `deductPoints`가 에러 반환 시 `pointsCheck.currentPoints`가 undefined → `shortfall` 계산이 NaN.
 
-**문제**: `scoreMultiplier`가 0이 될 수 있음 (예: 5% 완료 시)
+**개선안**:
+- 실패 케이스에서 `currentPoints` 유효성 검사
+- 에러 메시지 분기 처리
+
+---
+
+### 9. 배너 광고 ID 하드코딩
+**위치**: `src/screens/PlayScreenNativeModule.js` (line 19)
+
+**문제**: `adUnitId = null`로 고정되어 배포 전 변경 필요.
+
+**개선안**:
+- 환경 변수/빌드 설정으로 분리
 
 ---
 
 ## ⚠️ 잠재적 위험 (Potential Risks)
 
-### 9. 메모리 관리 - 큰 배열 처리
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 343-344)
+### 10. 메모리 관리 - 큰 배열 처리
+**위치**: `src/screens/PlayScreenNativeModule.js` (cells 생성)
 
-**문제**: `cells` 배열이 `gridSize * gridSize` 크기로 생성됨
+**문제**: `gridSize * gridSize` 크기의 객체 배열 생성.
 - 250x250 = 62,500개 객체
-- 각 객체는 `{row, col, targetColorHex, label}`
 
-**위험**: 큰 퍼즐에서 메모리 사용량 증가
-
----
-
-### 10. Race Condition - saveProgress
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 595-642)
-
-**문제**: 사용자가 빠르게 여러 셀을 채우고 앱을 종료하면 저장이 누락될 수 있음
+**위험**: 저사양 기기에서 메모리 사용 급증
 
 ---
 
-### 11. undefined 에러 가능성 (assets 접근)
-**위치**: `src/screens/GenerateScreen.js` (line 151)
+### 11. Race Condition - saveProgress
+**위치**: `src/screens/PlayScreenNativeModule.js` (saveProgress 디바운스)
 
-**문제**: `result.assets[0]` 접근 시 `assets` 배열이 비어있거나 undefined일 수 있음
-
-**현재 코드**:
-```javascript
-if (!result.canceled && result.assets[0]) {
-  setSelectedImage({ uri: result.assets[0].uri });
-}
-```
-
-**해결안**:
-```javascript
-if (!result.canceled && result.assets && result.assets.length > 0 && result.assets[0]) {
-  setSelectedImage({ uri: result.assets[0].uri });
-}
-```
+**문제**: 디바운스 타이머 전에 앱이 종료되면 저장 누락 가능.
 
 ---
 
-### 12. 다국어 폰백 로직 버그
-**위치**: `src/locales/index.js` (line 96-126)
+### 12. puzzleId 없는 경우 완성 이미지 미저장
+**위치**: `src/screens/PlayScreenNativeModule.js` (captureAndSaveCompletion)
 
-**문제**: `t()` 함수에서 한국어(ko)로 폰백할 때 value를 덮어쓰지만, 이후 keys 순회를 다시 시작하지 않음
-
-**현재 코드**:
-```javascript
-// 키를 찾지 못하면 기본 언어(한국어)에서 시도
-value = translations.ko;
-for (const fallbackKey of keys) {
-  if (value && typeof value === 'object' && fallbackKey in value) {
-    value = value[fallbackKey];
-  } else {
-    return key; // 기본 언어에서도 못 찾으면 키 반환
-  }
-}
-break;  // 🚨 문제: break 후 value는 마지막 키의 값
-```
-
-**결과**: 일부 중첩된 키에서 올바른 폰백이 작동하지 않을 수 있음
+**문제**: `puzzleId`가 없으면 완성 이미지 저장이 스킵됨.
 
 ---
 
-### 13. 마이그레이션 Race Condition
-**위치**: `src/utils/puzzleStorage.js` (line 99-178)
+### 13. AsyncStorage 키 충돌 가능성
+**위치**: `src/screens/PlayScreenNativeModule.js` (gameId 폴백)
 
-**문제**: `migratePuzzles`에서 퍼즐 배열을 수정하고 저장하는 동안 다른 코드가 `AsyncStorage`에 접근하면 데이터가 손실될 수 있음
+**문제**: `imageUri` 파일명 기반 키가 중복될 수 있음.
 
-**현재 코드**:
-```javascript
-const puzzles = await loadPuzzles();
-// ... 퍼즐 수정 로직 ...
-await AsyncStorage.setItem(PUZZLES_KEY, JSON.stringify(puzzles));
-```
-
-**개선**: 락(lock) 메커니즘이나 순차 실행 보장 필요
+**개선안**:
+- 해시 기반 키 또는 UUID 사용
 
 ---
 
-### 14. isMounted 체크 누락
-**위치**: `src/screens/GenerateScreen.js` (line 199-226)
+## ✅ 해결됨 (2026-02-07 확인)
 
-**문제**: `handleGenerate` 함수 낸 여러 비동기 작업 중 `isMounted` 체크가 누락됨
-
-**현재 코드**:
-```javascript
-const thumbnailImage = await manipulateAsync(...);  // line 216
-// 🚨 isMounted 체크 없음
-setPreviewImage(thumbnailImage.uri);
-```
-
-**위험**: 컴포넌트 언마운트 후 상태 업데이트 시 메모리 누수 경고 발생
-
----
-
-### 15. ThumbnailImage 컴포넌트 메모리 누수
-**위치**: `src/screens/GalleryScreen.js` (line 10-72)
-
-**문제**: `checkAndSetUri` async 함수가 컴포넌트 언마운트 후에도 상태 업데이트 가능
-
-**현재 코드**:
-```javascript
-useEffect(() => {
-  const checkAndSetUri = async () => {
-    // ... 파일 체크 로직 ...
-    setCurrentUri(uri);  // 🚨 언마운트 후 호출 가능
-    setHasError(false);
-  };
-  checkAndSetUri();
-}, [uri, puzzleId, progress, fallbackUri]);
-```
-
-**해결안**: 클린업 함수로 플래그 설정 필요
-
----
-
-### 16. K-Means++ 무한 루프 가능성
-**위치**: `src/utils/imageProcessor.js` (line 315-351)
-
-**문제**: `kMeansPlusPlusInit`에서 pixels 배열이 비어있으면 centroids가 비어있는 채로 반환됨
-
-**현재 코드**:
-```javascript
-function kMeansPlusPlusInit(pixels, k) {
-  const centroids = [];
-  centroids.push({ ...pixels[0] });  // 🚨 pixels가 비어있으면 undefined
-  while (centroids.length < k) {
-    // ...
-  }
-}
-```
-
-**위험**: 빈 이미지 처리 시 런타임 에러
-
----
-
-### 17. 색상 팔레트 ID 중복 가능성
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 122-190)
-
-**문제**: 64색 팔레트에서 `generateLabel` 함수가 COLOR_PALETTE[idx]?.id를 먼저 확인하지만, idx가 36 이상일 때는 2자리 라벨 생성 로직으로 넘어감
-
-**현재 코드**:
-```javascript
-const generateLabel = (idx) => {
-  if (idx < 36) {
-    return COLOR_PALETTE[idx]?.id || String.fromCharCode(65 + idx);
-  }
-  // 36-63: 2자리 라벨
-  const group = Math.floor((idx - 36) / 8);
-  const num = (idx - 36) % 8 + 1;
-  return `${String.fromCharCode(97 + group)}${num}`;
-};
-```
-
-**위험**: 색상 ID 충돌로 인한 잘못된 색상 매핑 가능성
-
----
-
-### 18. 배너 광고 ID 하드코딩
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 19)
-
-**문제**: 광고 ID가 `null`로 하드코딩되어 있어 배포 시 변경 필요
-
-**현재 코드**:
-```javascript
-const adUnitId = null;  // 개발자 테스트용 - 광고 비활성화
-```
-
-**참고**: 프로덕션 배포 전 반드시 실제 광고 ID로 변경 필요
-
----
-
-### 19. puzzleId 없는 경우 처리 미흡
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 470-561)
-
-**문제**: `captureAndSaveCompletion` 함수에서 puzzleId가 없으면 완성 이미지가 저장되지 않음
-
-**현재 코드**:
-```javascript
-const captureAndSaveCompletion = useCallback(async () => {
-  if (hasCompletedRef.current || !puzzleId) return;  // 🚨 puzzleId 없으면 리턴
-  // ...
-}, [puzzleId, isAutoRecapture, navigation]);
-```
-
-**위험**: 특정 경로로 Play 화면 진입 시 완성 이미지가 저장되지 않음
-
----
-
-### 20. AsyncStorage 키 충돌 가능성
-**위치**: `src/screens/PlayScreenNativeModule.js` (line 288-296)
-
-**문제**: gameId 생성 시 `imageUri` 기반 폰백에서 파일명 충돌 가능성
-
-**현재 코드**:
-```javascript
-const gameId = useMemo(() => {
-  if (puzzleId) {
-    return `puzzle_progress_${puzzleId}`;
-  }
-  if (!imageUri) return null;
-  const fileName = imageUri.split('/').pop()?.split('.')[0] || '';
-  return `native_${fileName}_${gridSize}`;  // 🚨 파일명 중복 가능
-}, [puzzleId, imageUri, gridSize]);
-```
-
-**위험**: 동일한 이미지 파일명을 가진 다른 이미지의 진행상황이 섞일 수 있음
+1. 포인트 손실 문제 (언마운트 시 pendingPoints 즉시 저장 추가)  
+2. Missing Import - Image (GalleryScreen에 Image import 존재)  
+3. useCallback 의존성 누락 이슈 (Ref + 함수형 업데이트로 해소)  
+4. mergeSimigarColors 오타 수정  
+5. scoreMultiplier 0 문제 (최소 10% 보장)  
+6. assets 접근 undefined 가드 추가  
+7. i18n 폰백 로직 오류 수정  
+8. GenerateScreen isMounted 체크 추가  
+9. ThumbnailImage 언마운트 업데이트 방지 처리  
+10. K-Means++ 빈 배열 처리 추가
 
 ---
 
@@ -351,17 +170,17 @@ const gameId = useMemo(() => {
 
 | 심각도 | 개수 | 주요 항목 |
 |--------|------|----------|
-| 🔴 Critical | 2 | 포인트 손실, Missing Import |
-| 🟡 Medium | 6 | 의존성 누락, 자동 복구 비활성화, 메모리 누수, 마이그레이션 Race Condition, i18n 폰백 버그 |
-| 🟢 Low | 6 | 오타, 광고 카운터, 계산 오류, assets 접근, 하드코딩 등 |
-| ⚠️ Risk | 3 | 메모리, Race Condition, ID 충돌 |
+| 🔴 Critical | 1 | 포인트 강제 초기화 |
+| 🟡 Medium | 4 | 라우트 파라미터 크래시, 포인트 롤백, 자동 복구 비활성화, 마이그레이션 Race |
+| 🟢 Low | 4 | 언마운트 업데이트, 광고 카운터, NaN 처리, 배너 광고 ID |
+| ⚠️ Risk | 4 | 메모리, 저장 레이스, puzzleId 미저장, 키 충돌 |
 
-**총 버그/개선사항: 20개**
+**총 버그/개선사항: 13개**
 
 ---
 
 ## 우선순위 수정 권장
 
-1. **즉시 수정**: 포인트 손실 문제 (Critical)
-2. **빠른 수정**: `Image` import 추가 (Critical)
-3. **권장**: 자동 복구 기능 활성화 (Medium)
+1. **즉시 수정**: 포인트 강제 초기화 제거  
+2. **빠른 수정**: GenerateScreen 라우트 파라미터/샘플 경로 안정화  
+3. **권장**: 포인트 차감 롤백 + 자동 복구 재활성화  
