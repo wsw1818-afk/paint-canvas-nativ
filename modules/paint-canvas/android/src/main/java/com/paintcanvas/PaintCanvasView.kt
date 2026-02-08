@@ -64,7 +64,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             onCanvasReady(mapOf(
                 "ready" to true,
                 "filledCells" to filledCells.size,
-                "wrongCells" to wrongPaintedCells.size
+                "wrongCells" to wrongPaintedCells.size,
+                "wrongCellKeys" to wrongPaintedCells.toList()
             ))
         }
     }
@@ -3031,6 +3032,29 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     if (savedScaleFactor > 1f || savedTranslateX != 0f || savedTranslateY != 0f) {
                         pendingViewportRestore = Triple(savedScaleFactor, savedTranslateX, savedTranslateY)
                         android.util.Log.d("PaintCanvas", "🔍 뷰포트 복원 예약: scale=$savedScaleFactor, tx=$savedTranslateX, ty=$savedTranslateY")
+                    }
+
+                    // 🔧 wrongCells 재검증: 칠해진 색상이 정답 색상과 일치하면 wrongCells에서 제거
+                    // (disperseColorDistribution 버그로 인해 잘못 판정된 셀 정리)
+                    if (wrongCellIndices.isNotEmpty() && parsedColorMap.isNotEmpty()) {
+                        val falsePosIndices = mutableListOf<Int>()
+                        val falsePosKeys = mutableListOf<String>()
+                        for (cellIndex in wrongCellIndices) {
+                            val paintedColor = paintedColorMapInt[cellIndex] ?: continue
+                            val targetColor = parsedColorMap[cellIndex] ?: continue
+                            // RGB만 비교 (알파 무시)
+                            if ((paintedColor and 0x00FFFFFF) == (targetColor and 0x00FFFFFF)) {
+                                falsePosIndices.add(cellIndex)
+                                val row = cellIndex / gridSize
+                                val col = cellIndex % gridSize
+                                falsePosKeys.add("$row-$col")
+                            }
+                        }
+                        if (falsePosIndices.isNotEmpty()) {
+                            for (idx in falsePosIndices) wrongCellIndices.remove(idx)
+                            for (key in falsePosKeys) wrongPaintedCells.remove(key)
+                            android.util.Log.d("PaintCanvas", "🔧 wrongCells 재검증: ${falsePosIndices.size}개 오판 셀 정리됨 (남은 wrong: ${wrongCellIndices.size})")
+                        }
                     }
 
                     isProgressLoaded = true  // 🚀 진행 상황 로딩 완료 플래그

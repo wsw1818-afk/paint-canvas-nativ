@@ -711,13 +711,39 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 🚀 Native 캔버스 초기화 완료 핸들러
   // 🐛 잠재적 문제 해결: Native에서 복원한 상태를 JS에 동기화
   const handleCanvasReady = useCallback((event) => {
-    const { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells } = event.nativeEvent;
+    const { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells, wrongCellKeys } = event.nativeEvent;
     console.log('[PlayScreen] 🚀 Native Canvas Ready:', { ready, filledCells: nativeFilledCells, wrongCells: nativeWrongCells });
 
-    // Native에서 복원한 데이터가 있으면 JS 상태에 반영 (Native가 마스터)
-    if (nativeFilledCells && nativeFilledCells > 0) {
-      // Native가 더 많은 데이터를 가지고 있으면 JS AsyncStorage에서 다시 로드
-      // (이미 loadProgress에서 로드했으므로 여기서는 개수만 확인)
+    // 🔧 Native에서 재검증된 wrongCells로 JS 동기화
+    // (disperseColorDistribution 버그로 인한 오판 셀 정리)
+    if (wrongCellKeys && Array.isArray(wrongCellKeys)) {
+      const nativeWrongSet = new Set(wrongCellKeys);
+      setWrongCells(prev => {
+        if (prev.size === nativeWrongSet.size) {
+          // 크기 같으면 내용 비교
+          let same = true;
+          for (const key of prev) {
+            if (!nativeWrongSet.has(key)) { same = false; break; }
+          }
+          if (same) return prev;
+        }
+        const removed = prev.size - nativeWrongSet.size;
+        if (removed > 0) {
+          console.log(`[PlayScreen] 🔧 wrongCells 동기화: ${removed}개 오판 셀 정리됨`);
+          // filledCells에서도 정리된 셀 제거 (다시 칠할 수 있도록)
+          setFilledCells(prevFilled => {
+            const newFilled = new Set(prevFilled);
+            for (const key of prev) {
+              if (!nativeWrongSet.has(key)) {
+                newFilled.delete(key);
+              }
+            }
+            return newFilled;
+          });
+        }
+        return nativeWrongSet;
+      });
+    } else if (nativeFilledCells && nativeFilledCells > 0) {
       console.log('[PlayScreen] 📊 Native 상태 동기화: filled=' + nativeFilledCells + ', wrong=' + nativeWrongCells);
     }
 

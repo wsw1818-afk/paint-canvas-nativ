@@ -1,1 +1,1 @@
-🔧 CPX-001~010 버그 일괄 수정: 포인트 리셋 제거, 롤백/NaN방어, 더블탭 방지, 진행 flush, 저장 직렬화, 자동복구, 광고카운터 영속화, 미사용코드 정리
+🐛 wrongCells 오판 재검증: Native 복원 시 칠한 색상=정답 색상인 셀을 wrongCells에서 자동 제거 + JS 동기화 (disperseColorDistribution 잔재 정리)
