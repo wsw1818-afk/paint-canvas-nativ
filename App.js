@@ -8,7 +8,6 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import HelpScreen from './src/screens/HelpScreen';
 import { initializeInterstitialAd } from './src/utils/adManager';
 import { loadLanguage } from './src/locales';
-import { setPoints } from './src/utils/pointsStorage';
 // Updated - Using PlayScreenNativeModule with native Android Canvas (zero latency)
 
 export default function App() {
@@ -23,8 +22,6 @@ export default function App() {
     const initialize = async () => {
       await loadLanguage();
       initializeInterstitialAd();
-      // 💎 테스트용: 포인트 100만으로 강제 설정
-      await setPoints(1000000);
       setIsReady(true);
     };
     initialize();

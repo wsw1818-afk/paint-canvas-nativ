@@ -6,7 +6,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const POINTS_KEY = '@points';
-const INITIAL_POINTS = 1000000; // 초기 포인트 (테스트용 100만)
+const INITIAL_POINTS = 50000; // 초기 포인트 (신규 설치 시 5만)
 
 /**
  * 현재 포인트 가져오기

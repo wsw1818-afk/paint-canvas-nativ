@@ -10,6 +10,9 @@ const PUZZLES_KEY = '@puzzles';
 const MIGRATION_VERSION_KEY = '@puzzle_migration_version';
 const CURRENT_MIGRATION_VERSION = 1;  // 마이그레이션 버전
 
+// 🔒 쓰기 직렬화: 동시 read-modify-write 경쟁 조건 방지
+let writeQueue = Promise.resolve();
+
 /**
  * 모든 저장된 퍼즐 불러오기
  */
@@ -24,10 +27,10 @@ export async function loadPuzzles() {
 }
 
 /**
- * 퍼즐 저장하기
+ * 퍼즐 저장하기 (직렬화)
  */
-export async function savePuzzle(puzzle) {
-  try {
+export function savePuzzle(puzzle) {
+  writeQueue = writeQueue.then(async () => {
     const puzzles = await loadPuzzles();
     const newPuzzle = {
       ...puzzle,
@@ -39,17 +42,18 @@ export async function savePuzzle(puzzle) {
     puzzles.push(newPuzzle);
     await AsyncStorage.setItem(PUZZLES_KEY, JSON.stringify(puzzles));
     return newPuzzle;
-  } catch (error) {
+  }).catch(error => {
     console.error('Error saving puzzle:', error);
     throw error;
-  }
+  });
+  return writeQueue;
 }
 
 /**
- * 퍼즐 업데이트
+ * 퍼즐 업데이트 (직렬화)
  */
-export async function updatePuzzle(puzzleId, updates) {
-  try {
+export function updatePuzzle(puzzleId, updates) {
+  writeQueue = writeQueue.then(async () => {
     const puzzles = await loadPuzzles();
     const index = puzzles.findIndex(p => p.id === puzzleId);
     if (index !== -1) {
@@ -58,24 +62,26 @@ export async function updatePuzzle(puzzleId, updates) {
       return puzzles[index];
     }
     return null;
-  } catch (error) {
+  }).catch(error => {
     console.error('Error updating puzzle:', error);
     throw error;
-  }
+  });
+  return writeQueue;
 }
 
 /**
- * 퍼즐 삭제
+ * 퍼즐 삭제 (직렬화)
  */
-export async function deletePuzzle(puzzleId) {
-  try {
+export function deletePuzzle(puzzleId) {
+  writeQueue = writeQueue.then(async () => {
     const puzzles = await loadPuzzles();
     const filtered = puzzles.filter(p => p.id !== puzzleId);
     await AsyncStorage.setItem(PUZZLES_KEY, JSON.stringify(filtered));
-  } catch (error) {
+  }).catch(error => {
     console.error('Error deleting puzzle:', error);
     throw error;
-  }
+  });
+  return writeQueue;
 }
 
 /**

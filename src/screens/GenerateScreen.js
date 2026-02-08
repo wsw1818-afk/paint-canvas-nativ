@@ -9,7 +9,7 @@ import { savePuzzle } from '../utils/puzzleStorage';
 import { generateWeavePreviewImage } from '../utils/weavePreviewGenerator';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { t, addLanguageChangeListener } from '../locales';
-import { getPoints, deductPoints, getPuzzleCost } from '../utils/pointsStorage';
+import { getPoints, setPoints, deductPoints, getPuzzleCost } from '../utils/pointsStorage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const loadingImage = require('../../assets/loading-image.png');
@@ -28,7 +28,7 @@ const getCompletionModes = () => [
 ];
 
 export default function GenerateScreen({ route, navigation }) {
-  const { sourceType } = route.params;
+  const sourceType = route?.params?.sourceType ?? 'gallery';
   const [selectedDifficulty, setSelectedDifficulty] = useState('NORMAL');
   const [completionMode, setCompletionMode] = useState('ORIGINAL'); // 완성 모드 (ORIGINAL: 원본 이미지, WEAVE: 위빙 텍스처)
   const [selectedImage, setSelectedImage] = useState(null);
@@ -39,6 +39,7 @@ export default function GenerateScreen({ route, navigation }) {
   const [permissionReady, setPermissionReady] = useState(false);
   const [currentPoints, setCurrentPoints] = useState(0); // 현재 보유 포인트
   const isMounted = useRef(true);
+  const isGeneratingRef = useRef(false); // 🔒 재진입 방지 락
 
   // 컴포넌트 마운트 시 권한 미리 요청 (ActivityResultLauncher 초기화 보장)
   useEffect(() => {
@@ -173,7 +174,12 @@ export default function GenerateScreen({ route, navigation }) {
   const COMPLETION_MODES = getCompletionModes();
 
   const handleGenerate = async () => {
+    // 🔒 재진입 방지: 이미 생성 중이면 무시
+    if (isGeneratingRef.current) return;
+    isGeneratingRef.current = true;
+
     if (!selectedImage && sourceType !== 'sample') {
+      isGeneratingRef.current = false;
       Alert.alert(t('generate.selectImageTitle'), t('generate.selectImageMessage'));
       return;
     }
@@ -184,14 +190,21 @@ export default function GenerateScreen({ route, navigation }) {
     const pointsCheck = await deductPoints(cost);
 
     if (!pointsCheck.success) {
-      const shortfall = cost - pointsCheck.currentPoints;
+      // 🛡️ NaN 방어: currentPoints가 유효하지 않으면 0으로 처리
+      const safeCurrentPoints = (typeof pointsCheck.currentPoints === 'number' && !isNaN(pointsCheck.currentPoints))
+        ? pointsCheck.currentPoints : 0;
+      const shortfall = cost - safeCurrentPoints;
       Alert.alert(
         t('generate.pointsRequired') || '포인트 필요',
-        t('generate.pointsShortfall', { current: pointsCheck.currentPoints, cost, shortfall }) ||
-        `포인트가 부족합니다.\n\n필요: ${cost.toLocaleString()}P\n보유: ${pointsCheck.currentPoints.toLocaleString()}P\n부족: ${shortfall.toLocaleString()}P\n\n더 많은 퍼즐을 색칠하여 포인트를 획득하세요!`
+        t('generate.pointsShortfall', { current: safeCurrentPoints, cost, shortfall }) ||
+        `포인트가 부족합니다.\n\n필요: ${cost.toLocaleString()}P\n보유: ${safeCurrentPoints.toLocaleString()}P\n부족: ${shortfall.toLocaleString()}P\n\n더 많은 퍼즐을 색칠하여 포인트를 획득하세요!`
       );
+      isGeneratingRef.current = false;
       return;
     }
+
+    // 🔄 롤백용 스냅샷 저장
+    const previousPoints = pointsCheck.newPoints + cost;
 
     // 포인트 차감 성공 → 화면에 반영
     setCurrentPoints(pointsCheck.newPoints);
@@ -313,6 +326,7 @@ export default function GenerateScreen({ route, navigation }) {
       setPreviewImage(null);
 
       // 격자 적용 완료 메시지 표시 후 갤러리로 이동
+      isGeneratingRef.current = false;
       Alert.alert(
         t('generate.gridApplied'),
         t('generate.gridAppliedMessage'),
@@ -328,6 +342,15 @@ export default function GenerateScreen({ route, navigation }) {
       setPreviewImage(null);
       setLoadingProgress(0);
       console.error('퍼즐 저장 실패:', error);
+      // 🔄 포인트 롤백: 생성 실패 시 차감된 포인트 복구
+      try {
+        await setPoints(previousPoints);
+        setCurrentPoints(previousPoints);
+        console.log(`[포인트] 롤백 완료: ${previousPoints}P 복구`);
+      } catch (rollbackError) {
+        console.error('[포인트] 롤백 실패:', rollbackError);
+      }
+      isGeneratingRef.current = false;
       Alert.alert(t('generate.saveFailed'), error.message || t('generate.saveFailedMessage'));
     }
   };

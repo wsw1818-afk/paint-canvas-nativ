@@ -4,13 +4,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition, clearProgressForGame } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { updatePuzzle, getPuzzleById } from '../utils/puzzleStorage';
+import { updatePuzzle } from '../utils/puzzleStorage';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import { addPoints, getPuzzleCost } from '../utils/pointsStorage';
-import { getTextureById } from '../utils/textureStorage';
 
 // 🎯 광고 ID 설정
 // - 정식 ID (플레이스토어): 'ca-app-pub-8246295829048098/7057199542'
@@ -259,24 +258,43 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 📢 뒤로가기 핸들러 (5회마다 전면 광고)
   // 🐛 버그 수정: 뒤로가기 전 진행 상황 즉시 저장 (디바운스 3초 내 데이터 손실 방지)
   const handleBackPress = useCallback(() => {
-    // 저장 디바운스 타이머가 있으면 취소하고 즉시 저장
+    // 저장 디바운스 타이머가 있으면 취소
     if (saveProgressRef.current) {
       clearTimeout(saveProgressRef.current);
       saveProgressRef.current = null;
     }
+    // 🔄 진행 상황 즉시 저장 (fire-and-forget)
+    if (gameId && filledCellsRef.current.size > 0) {
+      const data = {
+        filledCells: Array.from(filledCellsRef.current),
+        wrongCells: Array.from(wrongCellsRef.current),
+        everWrongCells: Array.from(everWrongCellsRef.current),
+        score: scoreRef.current,
+        timestamp: Date.now()
+      };
+      AsyncStorage.setItem(gameId, JSON.stringify(data)).catch(() => {});
+      // 퍼즐 진행률도 즉시 저장
+      if (puzzleId) {
+        const totalCells = gridSize * gridSize;
+        const correctCells = filledCellsRef.current.size - wrongCellsRef.current.size;
+        const progress = Math.round(Math.max(0, Math.min(100, (correctCells / totalCells) * 100)));
+        updatePuzzle(puzzleId, { progress, lastPlayed: new Date().toISOString() }).catch(() => {});
+      }
+    }
     // 포인트 배치 저장도 즉시 처리
     if (pointsFlushTimerRef.current) {
       clearTimeout(pointsFlushTimerRef.current);
-      const points = pendingPointsRef.current;
-      if (points > 0) {
-        pendingPointsRef.current = 0;
-        addPoints(points).catch(() => {});
-      }
+      pointsFlushTimerRef.current = null;
+    }
+    const points = pendingPointsRef.current;
+    if (points > 0) {
+      pendingPointsRef.current = 0;
+      addPoints(points).catch(() => {});
     }
     showBackNavigationAd(() => {
       navigation.goBack();
     });
-  }, [navigation]);
+  }, [navigation, gameId, puzzleId, gridSize]);
 
   // ✨ 되돌리기 버튼 반짝임 애니메이션
   const undoPulseAnim = useRef(new Animated.Value(1)).current;
@@ -290,9 +308,12 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       return `puzzle_progress_${puzzleId}`;
     }
     if (!imageUri) return null;
-    // 폴백: 파일명에서 확장자 제거
-    const fileName = imageUri.split('/').pop()?.split('.')[0] || '';
-    return `native_${fileName}_${gridSize}`;
+    // 폴백: URI 전체를 해시하여 충돌 방지 (파일명만으로는 다른 경로의 같은 이름 충돌)
+    let hash = 0;
+    for (let i = 0; i < imageUri.length; i++) {
+      hash = ((hash << 5) - hash + imageUri.charCodeAt(i)) | 0;
+    }
+    return `native_${Math.abs(hash).toString(36)}_${gridSize}`;
   }, [puzzleId, imageUri, gridSize]);
 
   // 🗑️ 리셋 시 Native SharedPreferences 삭제 (View 생성 전에 호출)
@@ -657,11 +678,22 @@ export default function PlayScreenNativeModule({ route, navigation }) {
       saveProgress();
     }
 
-    // 🔧 cleanup: 언마운트 시 대기 중인 저장 타이머 정리 + 포인트 즉시 저장
+    // 🔧 cleanup: 언마운트 시 진행 상황 즉시 저장 + 타이머 정리
     return () => {
       if (saveProgressRef.current) {
         clearTimeout(saveProgressRef.current);
         saveProgressRef.current = null;
+      }
+      // 🔄 언마운트 시 진행 상황 즉시 저장
+      if (gameId && filledCellsRef.current.size > 0) {
+        const data = {
+          filledCells: Array.from(filledCellsRef.current),
+          wrongCells: Array.from(wrongCellsRef.current),
+          everWrongCells: Array.from(everWrongCellsRef.current),
+          score: scoreRef.current,
+          timestamp: Date.now()
+        };
+        AsyncStorage.setItem(gameId, JSON.stringify(data)).catch(() => {});
       }
       // 🐛 포인트 손실 방지: 언마운트 시 대기 중인 포인트 즉시 저장
       if (pendingPointsRef.current > 0) {

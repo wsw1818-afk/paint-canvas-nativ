@@ -50,16 +50,37 @@ let unsubscribeLoaded = null;
 let unsubscribeError = null;
 let unsubscribeClosed = null;
 
-// 인터랙션 카운터 (메모리)
+// 인터랙션 카운터 (영속 + 메모리 캐시)
 let interactionCounts = {
   backNavigation: 0,
   puzzleSelect: 0,
+};
+
+// 카운터 로드 (앱 시작 시)
+const loadAdCounters = async () => {
+  try {
+    const saved = await AsyncStorage.getItem(AD_COUNTER_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      interactionCounts = { ...interactionCounts, ...parsed };
+    }
+  } catch {}
+};
+
+// 카운터 저장
+const saveAdCounters = async () => {
+  try {
+    await AsyncStorage.setItem(AD_COUNTER_KEY, JSON.stringify(interactionCounts));
+  } catch {}
 };
 
 /**
  * 전면 광고 초기화 및 로드
  */
 export const initializeInterstitialAd = () => {
+  // 카운터 복원 (광고 비활성화여도 카운터는 유지)
+  loadAdCounters();
+
   // 광고 ID가 null이면 초기화하지 않음 (개발자 테스트 모드)
   if (!INTERSTITIAL_AD_UNIT_ID) {
     console.log('📢 전면 광고 비활성화됨 (개발자 테스트 모드)');
@@ -177,12 +198,14 @@ export const showInterstitialAd = async (trigger, onAdClosed = null) => {
 
     case 'BACK_NAVIGATION':
       interactionCounts.backNavigation++;
+      saveAdCounters();
       shouldShow = AD_CONFIG.BACK_NAVIGATION.enabled &&
         (interactionCounts.backNavigation % AD_CONFIG.BACK_NAVIGATION.frequency === 0);
       break;
 
     case 'PUZZLE_SELECT':
       interactionCounts.puzzleSelect++;
+      saveAdCounters();
       shouldShow = AD_CONFIG.PUZZLE_SELECT.enabled &&
         (interactionCounts.puzzleSelect % AD_CONFIG.PUZZLE_SELECT.frequency === 0);
       break;
@@ -198,10 +221,11 @@ export const showInterstitialAd = async (trigger, onAdClosed = null) => {
   }
 
   // 광고 닫힘 콜백 등록
+  let closeListener = null;
   if (onAdClosed) {
-    const closeListener = interstitialAd.addAdEventListener(AdEventType.CLOSED, () => {
+    closeListener = interstitialAd.addAdEventListener(AdEventType.CLOSED, () => {
       onAdClosed();
-      closeListener(); // 리스너 제거
+      if (closeListener) { closeListener(); closeListener = null; }
     });
   }
 
@@ -212,6 +236,8 @@ export const showInterstitialAd = async (trigger, onAdClosed = null) => {
     return true;
   } catch (error) {
     console.log('📢 전면 광고 표시 실패:', error);
+    // 🔧 show 실패 시 per-show 리스너 즉시 정리
+    if (closeListener) { closeListener(); closeListener = null; }
     if (onAdClosed) onAdClosed();
     return false;
   }
