@@ -27,5 +27,7 @@
     "**/android/.kotlin": true,
     "**/android/build": true,
     "**/.expo": true
-  }
+  },
+  "Codegeex.GenerationPreference": "automatic",
+  "Codegeex.RepoIndex": true
 }
