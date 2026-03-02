@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   button: {
-    marginBottom: SpotifySpacing.base,
+    display: 'none',
     borderRadius: SpotifyRadius.lg,
     overflow: 'hidden',
     elevation: 4,
