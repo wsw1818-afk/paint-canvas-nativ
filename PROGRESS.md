@@ -1,7 +1,64 @@
 # PROGRESS.md
 
-> 업데이트: 2026-02-08
-> 세션 목적: CPX-001~010 버그 일괄 구현
+> 업데이트: 2026-03-20
+> 세션 목적: 빌드/번들/로그 최적화 + Expo 의존성 정합화
+
+---
+
+## What changed (이번 세션: 2026-03-20)
+
+### OPT-001 [P0] ✅ 완료 — Android 릴리즈 빌드 최적화 플래그 활성화
+- `android/gradle.properties`:
+  - `android.enableMinifyInReleaseBuilds=true`
+  - `android.enableShrinkResourcesInReleaseBuilds=true`
+  - `android.enableBundleCompression=true`
+- 효과: 릴리즈 난독화/리소스 축소/번들 압축 경로 활성화
+
+### OPT-002 [P0] ✅ 완료 — EAS production Android 빌드 타입 AAB 전환
+- `eas.json`: `production.android.buildType`을 `apk` → `app-bundle`로 변경
+- 효과: 스토어 배포 기준 빌드 형태 정합화
+
+### OPT-003 [P1] ✅ 완료 — production JS 로그 제거 경로 추가
+- `babel.config.js`: production에서 `transform-remove-console` 활성화 (`error`, `warn` 제외)
+- `package.json`: `babel-plugin-transform-remove-console` 추가
+- 효과: 프로덕션 JS 로그 오버헤드/노이즈 감소
+
+### OPT-004 [P1] ✅ 완료 — Native 로그 브리지 dev 전용화
+- `src/screens/PlayScreenNativeModule.js`:
+  - `handleNativeLog` 내부 `if (!__DEV__) return;`
+  - `onNativeLog` prop을 `__DEV__`에서만 전달
+- 효과: 프로덕션 JS<->Native 로그 브리지 비용 감소
+
+### OPT-005 [P2] ✅ 완료 — Gallery 렌더 루프 디버그 로그 제한
+- `src/screens/GalleryScreen.js`:
+  - 미사용 `useFocusEffect` import 제거
+  - 리스트 렌더 루프 내 상세 로그를 `__DEV__` 조건으로 제한
+- 효과: 리스트 렌더 시 불필요한 로그 실행 최소화
+
+### OPT-006 [P1] ✅ 완료 — Expo SDK 54 patch 정합화 + 의존성 정리
+- `package.json`:
+  - `expo`/`expo-dev-client`/`expo-file-system`/`expo-image-manipulator`/`expo-image-picker`/`expo-linear-gradient`/`expo-status-bar` patch 정렬
+  - `@expo/config-plugins` 직접 의존성 제거
+  - `babel-preset-expo`를 devDependencies 단일 항목으로 정리
+- 검증: `npx expo-doctor` 17/17 통과
+
+### OPT-007 [P2] ✅ 완료 — 로컬 산출물 ignore 규칙 보강
+- `.gitignore`:
+  - `dist-export/`
+  - `dist-export*/`
+- 효과: export 산출물의 실수 커밋 방지
+
+### 검증 결과
+- `npx tsc --noEmit` 통과
+- `npx expo-doctor` 17/17 통과
+- `npx expo export --platform android` 기준 HBC 번들 크기 개선
+  - 기존 점검치: 약 4.12MB
+  - 변경 후 점검치: 약 3.87MB
+
+### 남은 이슈
+- iOS AdMob `iosAppId` 미설정 경고 지속
+  - 영향: iOS에서 Google Mobile Ads SDK 크래시 가능
+  - 후속: `app.json` plugin 설정에 `iosAppId` 추가 필요
 
 ---
 

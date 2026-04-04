@@ -144,13 +144,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         cellSize = canvasWidth / gridSize
 
         // 난이도별 최대 줌 설정
-        // gridSize 클수록 maxZoom 높임
-        when {
-            gridSize <= 120 -> maxZoom = 10f   // 쉬움: 120×120
-            gridSize <= 160 -> maxZoom = 12f  // 보통: 160×160
-            gridSize <= 200 -> maxZoom = 15f  // 어려움: 200×200
-            else -> maxZoom = 20f             // 초고화질: 250×250+
-        }
+        // 최대 줌 14x
+        maxZoom = 14f
         // 모든 난이도에서 1x ↔ 80% 두 단계만 순환
         val zoomAt80Percent = maxZoom * 0.8f
         ZOOM_LEVELS = floatArrayOf(1f, zoomAt80Percent)  // 1x ↔ 80%
@@ -827,20 +822,34 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val TAP_TIMEOUT = 500L  // Max time for a tap (ms) - increased for easier detection
     private val TAP_SLOP = 100f  // Max movement for a tap (pixels) - increased tolerance
 
-    // 🎯 연속 핀치 줌 (Google Maps 스타일)
+    // 🎯 핀치 줌
     private var isPinching = false
-    private var pinchStartScale = 1f  // 핀치 시작 시 스케일
-    private var pinchStartSpan = 0f   // 핀치 시작 시 손가락 거리
-    private var isPanningOnly = false // 🐛 팬 모드 시작 시 줌 차단
-    private var initialSpanForPanCheck = 0f  // 🐛 팬/줌 결정용 초기 간격
-    private var isSingleFingerPanning = false // 🐛 한 손가락 팬 모드 (드래그 중 색칠 차단)
-    private var scaleGestureStartTime = 0L   // 🎯 두 손가락 탭 감지용 시작 시간
-    private var lastStepZoomTime = 0L  // 🐛 stepZoom 중복 호출 방지용 쿨다운
-    private val STEP_ZOOM_COOLDOWN = 300L  // 300ms 쿨다운
+    private var pinchStartScale = 1f
+    private var pinchStartSpan = 0f
+    private var isPanningOnly = false
+    private var initialSpanForPanCheck = 0f
+    private var isSingleFingerPanning = false
+    private var scaleGestureStartTime = 0L
+    private var lastStepZoomTime = 0L
+    private val STEP_ZOOM_COOLDOWN = 150L
 
-    // 🎬 부드러운 줌 애니메이션 (두 손가락 탭용)
+    // 🎬 줌 애니메이션
     private var zoomAnimator: ValueAnimator? = null
-    private val ZOOM_ANIMATION_DURATION = 250L  // 애니메이션 지속 시간 (ms)
+    private val ZOOM_ANIMATION_DURATION = 80L
+
+    // 📱 더블탭 감지
+    private var lastSingleTapTime = 0L
+    private var lastSingleTapX = 0f
+    private var lastSingleTapY = 0f
+    private val DOUBLE_TAP_TIMEOUT = 300L  // 더블탭 간격 (ms)
+    private val DOUBLE_TAP_SLOP = 80f      // 더블탭 허용 이동 거리 (px)
+
+    // 📱 더블탭+홀드 연속 줌
+    private var isDoubleTapHoldZoom = false  // 더블탭+홀드 줌 모드
+    private var doubleTapHoldStartY = 0f    // 홀드 시작 Y 위치
+    private var doubleTapHoldStartScale = 0f // 홀드 시작 스케일
+    private var doubleTapFocusX = 0f         // 더블탭 포커스 X
+    private var doubleTapFocusY = 0f         // 더블탭 포커스 Y
 
     // ⚡ 프레임 레이트 제한 - throttledInvalidate()에서 사용
     // (변수 선언은 클래스 상단으로 이동됨: lastInvalidateTime, MIN_INVALIDATE_INTERVAL)
@@ -850,17 +859,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             onScaleCallCount++
-            // ⚡ 최적화: 로그 제거 (매 프레임 호출되므로 성능 저하)
-            // ⚠️ 안전 체크
             if (pinchStartSpan <= 0f || initialSpanForPanCheck <= 0f) return true
-            // 🎯 3단계 줌: 연속 줌 비활성화! onScaleEnd에서 stepZoom으로만 줌 처리
+            // 스텝 줌 전용: onScale에서는 줌 안 함 (onScaleEnd에서 처리)
             return true
         }
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             onScaleCallCount = 0
-            // 🚫 팬 모드일 때는 줌 시작 거부
-            if (isPanningOnly) return false
             touchMode = TouchMode.ZOOM
             isPinching = true
             pinchStartScale = scaleFactor
@@ -872,26 +877,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
-            val gestureDuration = System.currentTimeMillis() - scaleGestureStartTime
-            // 🔧 span 변화율 분석
+            // 🎯 핀치 → 스텝 줌 (확실한 핀치만 감지: 30% 이상 변화)
             val spanRatio = if (pinchStartSpan > 0f) detector.currentSpan / pinchStartSpan else 1f
-            // 팬 거리 계산 (TAP 판정에만 사용)
-            val panDistanceForTap = kotlin.math.sqrt(
-                (detector.focusX - twoFingerStartX) * (detector.focusX - twoFingerStartX) +
-                (detector.focusY - twoFingerStartY) * (detector.focusY - twoFingerStartY)
-            )
-            // 🎯 핀치 줌 판단
-            val isPinchZoomIn = spanRatio > 1.10f && panDistanceForTap < 150f
-            val isPinchZoomOut = spanRatio < 0.90f && panDistanceForTap < 150f
-            val isSpanStable = spanRatio > 0.92f && spanRatio < 1.08f && panDistanceForTap < 50f
-
-            // 🎯 줌 처리
-            if (!isPanningOnly) {
-                when {
-                    isPinchZoomIn -> stepZoom(detector.focusX, detector.focusY, zoomIn = true)
-                    isPinchZoomOut -> stepZoom(detector.focusX, detector.focusY, zoomIn = false)
-                    isSpanStable && gestureDuration < 300L -> stepZoom(detector.focusX, detector.focusY, zoomIn = true)
-                }
+            when {
+                spanRatio > 1.30f -> stepZoom(detector.focusX, detector.focusY, zoomIn = true)
+                spanRatio < 0.70f -> stepZoom(detector.focusX, detector.focusY, zoomIn = false)
             }
             touchMode = TouchMode.NONE
             isPinching = false
@@ -921,9 +911,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         currentZoomIndex = closestIndex
     }
 
-    // Step zoom: 3단계 줌 (1x ↔ 80% ↔ 100%)
-    // 확대 방향: 1x → 80% → 100%
-    // 축소 방향: 100% → 80% → 1x
+    // Step zoom: 1x → 70% → 85% → 95% → 100% (축소는 역순)
+    // 줌 레벨: [1x, 70%, 85%, 95%, 100%] of maxZoom
+    // 줌 단계: 1x → 7.5x → 14x (총 3단계)
+    private val STEP_ZOOM_LEVELS = floatArrayOf(1f, 7.5f, 14f)
+
     private fun stepZoom(focusX: Float, focusY: Float, zoomIn: Boolean = true) {
         val now = System.currentTimeMillis()
         val timeSinceLastZoom = now - lastStepZoomTime
@@ -932,33 +924,28 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         if (timeSinceLastZoom < STEP_ZOOM_COOLDOWN) return
         lastStepZoomTime = now
 
-        val zoomAt80 = maxZoom * 0.8f
-        val zoomAt100 = maxZoom
+        val levels = STEP_ZOOM_LEVELS
 
-        // 현재 위치 판정 (오차 범위 10%)
-        val isNear1x = scaleFactor <= 1.1f
-        val isNear80 = scaleFactor > zoomAt80 * 0.9f && scaleFactor < zoomAt80 * 1.1f
-        val isNear100 = scaleFactor >= zoomAt100 * 0.9f
-
-        // 3단계 줌 결정
-        val targetScale: Float = if (zoomIn) {
-            // 확대 방향: 1x → 80% → 100% (100%에서는 유지)
-            when {
-                isNear1x -> { currentZoomIndex = 1; zoomAt80 }
-                isNear80 -> { currentZoomIndex = 2; zoomAt100 }
-                isNear100 -> scaleFactor  // 이미 100%, 유지
-                else -> if (scaleFactor < zoomAt80) { currentZoomIndex = 1; zoomAt80 } else { currentZoomIndex = 2; zoomAt100 }
-            }
-        } else {
-            // 축소 방향: 100% → 80% → 1x (1x에서는 유지)
-            when {
-                isNear100 -> { currentZoomIndex = 1; zoomAt80 }
-                isNear80 -> { currentZoomIndex = 0; 1f }
-                isNear1x -> scaleFactor  // 이미 1x, 유지
-                else -> if (scaleFactor > zoomAt80) { currentZoomIndex = 1; zoomAt80 } else { currentZoomIndex = 0; 1f }
+        // 현재 스케일에 가장 가까운 레벨 인덱스 찾기
+        var closestIdx = 0
+        var minDiff = Float.MAX_VALUE
+        for (i in levels.indices) {
+            val diff = kotlin.math.abs(scaleFactor - levels[i])
+            if (diff < minDiff) {
+                minDiff = diff
+                closestIdx = i
             }
         }
-        // ⚡ 최적화: 로그 제거
+
+        val targetIdx = if (zoomIn) {
+            (closestIdx + 1).coerceAtMost(levels.size - 1)
+        } else {
+            (closestIdx - 1).coerceAtLeast(0)
+        }
+
+        val targetScale = levels[targetIdx]
+        if (kotlin.math.abs(targetScale - scaleFactor) < 0.1f) return
+        currentZoomIndex = targetIdx
         animateZoomTo(targetScale, focusX, focusY)
     }
 
@@ -986,10 +973,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
      * @param focusY 줌 포커스 Y 좌표
      */
     private fun animateZoomTo(targetScale: Float, focusX: Float, focusY: Float) {
-        // ⚡ 최적화: 변경 없으면 바로 리턴
         if (kotlin.math.abs(targetScale - scaleFactor) < 0.01f) return
 
         val startScale = scaleFactor
+        val startTranslateX = translateX
+        val startTranslateY = translateY
         zoomAnimator?.cancel()
 
         // 목표 위치 계산
@@ -1005,7 +993,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             targetTranslateY = focusY - (focusY - translateY) * scaleDelta
         }
 
-        // ⚡ 즉시 적용
+        // ⚡ 즉시 적용 (단계가 보이지 않도록)
         scaleFactor = targetScale
         translateX = targetTranslateX
         translateY = targetTranslateY
@@ -1059,12 +1047,12 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 pendingViewportRestore = null
                 android.util.Log.d("PaintCanvas", "🔍 뷰포트 복원 완료: scale=$scaleFactor, tx=$translateX, ty=$translateY")
             } else {
-                // 첫 초기화 - 줌 리셋
+                // 첫 초기화 - 1x (전체 보기)에서 시작
                 scaleFactor = 1f
                 currentZoomIndex = 0
                 translateX = (canvasViewWidth - canvasWidth) / 2f
                 translateY = (canvasViewHeight - canvasWidth) / 2f
-                android.util.Log.d("PaintCanvas", "📐 First init: reset zoom to 1x")
+                android.util.Log.d("PaintCanvas", "📐 First init: zoom=1x (전체 보기)")
             }
         } else if (sizeActuallyChanged) {
             // 크기 변경됨 - 줌 유지하되 경계만 재조정
@@ -1270,23 +1258,38 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_DOWN -> {
                 lastTouchX = event.x
                 lastTouchY = event.y
-                touchStartX = event.x  // ⚡ 터치 시작 위치 저장
+                touchStartX = event.x
                 touchStartY = event.y
                 activePointerId = event.getPointerId(0)
-                // 🐛 줌 중이면 색칠 차단 (핀치 줌 후 손가락 뗄 때 색칠 방지)
                 preventPaintOnce = isPinching || touchMode == TouchMode.ZOOM
                 allowPainting = false
                 touchDownTime = System.currentTimeMillis()
-                hasMoved = false  // ⚡ 이동 여부 리셋
-                wasMultiTouchInSession = false  // 🐛 새 터치 세션 시작
-                isSingleFingerPanning = false  // 🐛 한 손가락 팬 모드 리셋
+                hasMoved = false
+                wasMultiTouchInSession = false
+                isSingleFingerPanning = false
+
+                // 📱 한 손가락 더블탭 감지
+                val now = System.currentTimeMillis()
+                val timeSinceLastTap = now - lastSingleTapTime
+                val distFromLastTap = kotlin.math.sqrt(
+                    (event.x - lastSingleTapX) * (event.x - lastSingleTapX) +
+                    (event.y - lastSingleTapY) * (event.y - lastSingleTapY)
+                )
+                if (timeSinceLastTap < DOUBLE_TAP_TIMEOUT && distFromLastTap < DOUBLE_TAP_SLOP) {
+                    isDoubleTapHoldZoom = true
+                    doubleTapHoldStartY = event.y
+                    doubleTapHoldStartScale = scaleFactor
+                    doubleTapFocusX = event.x
+                    doubleTapFocusY = event.y
+                    preventPaintOnce = true
+                    allowPainting = false
+                }
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // Second finger down - block painting
                 preventPaintOnce = true
                 allowPainting = false
-                wasMultiTouchInSession = true  // 🐛 두 손가락 사용됨 - 이 세션 동안 색칠 차단
+                wasMultiTouchInSession = true
 
                 if (event.pointerCount == 2) {
                     val centroidX = (event.getX(0) + event.getX(1)) / 2f
@@ -1299,21 +1302,41 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                     twoFingerLastX = centroidX
                     twoFingerLastY = centroidY
 
-                    // 🐛 팬/줌 결정을 위한 초기 손가락 간격 저장
                     val dx = event.getX(0) - event.getX(1)
                     val dy = event.getY(0) - event.getY(1)
                     initialSpanForPanCheck = kotlin.math.sqrt(dx * dx + dy * dy)
                     isPanningOnly = false
-                    // ⚡ 최적화: 상세 로그 제거
+
+                    // 두 손가락은 핀치 줌 + 팬만 처리
                 }
             }
 
             MotionEvent.ACTION_MOVE -> {
                 when (event.pointerCount) {
                     1 -> {
+                        // 📱 더블탭+홀드 줌 모드: 위/아래 드래그로 연속 줌
+                        if (isDoubleTapHoldZoom) {
+                            val dy = doubleTapHoldStartY - event.y  // 위로 드래그 = 양수 = 확대
+                            // 20px 이상 움직여야 줌 시작 (짧은 더블탭과 구분)
+                            if (kotlin.math.abs(dy) > 20f) {
+                                val zoomSensitivity = 0.005f
+                                val newScale = (doubleTapHoldStartScale * (1f + dy * zoomSensitivity)).coerceIn(1f, maxZoom)
+                                if (kotlin.math.abs(newScale - scaleFactor) > 0.01f) {
+                                    val fx = doubleTapFocusX
+                                    val fy = doubleTapFocusY
+                                    translateX = fx - (fx - translateX) * (newScale / scaleFactor)
+                                    translateY = fy - (fy - translateY) * (newScale / scaleFactor)
+                                    scaleFactor = newScale
+                                    applyBoundaries()
+                                    invalidate()
+                                }
+                                hasMoved = true
+                            }
+                            return true
+                        }
+
                         // 🐛 두 손가락이 한 번이라도 사용되었으면 이 세션 동안 색칠 완전 차단
                         if (wasMultiTouchInSession) {
-                            // 두 손가락 팬/줌 후 한 손가락만 남아도 색칠 안 함 (팬만 허용)
                             val dx = event.x - lastTouchX
                             val dy = event.y - lastTouchY
                             lastTouchX = event.x
@@ -1321,13 +1344,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             return true
                         }
 
-                        // 🐛 줌 중이거나 핀치 직후면 색칠 차단
-                        // 🐛 추가: 두 손가락 제스처 종료 후 600ms 동안 색칠 차단 (이동 후 색칠 방지)
                         val timeSinceMultiTouch = System.currentTimeMillis() - lastMultiTouchEndTime
                         val isMultiTouchCooldown = timeSinceMultiTouch < 600L
-
-                        // 🎨 연속 드래그 색칠 활성화: isSingleFingerPanning 로직 제거
-                        // 한 손가락 드래그는 색칠로 사용 (두 손가락만 팬)
 
                         if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown) {
                             val timeSinceDown = System.currentTimeMillis() - touchDownTime
@@ -1335,14 +1353,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val dy = event.y - touchStartY
                             val distance = kotlin.math.sqrt(dx * dx + dy * dy)
 
-                            // ⚡ 두 손가락 터치 방지: 30ms 대기 또는 8px 이동 시 색칠 시작
-                            // 두 손가락은 보통 40ms 내 두 번째 손가락 도착
+                            // 색칠 시작: 30ms 대기 또는 8px 이동
                             if (timeSinceDown >= 30L || distance > 8f) {
                                 allowPainting = true
                                 handlePainting(event.x, event.y)
-                                hasMoved = true
-                            } else if (hasMoved) {
-                                // 이미 드래그 시작했으면 바로 색칠 (distance 체크 제거)
+                                // hasMoved는 실제 이동이 있을 때만 (탭 감지용 - 15px 이상)
+                                if (distance > 15f) hasMoved = true
+                            } else if (allowPainting) {
                                 handlePainting(event.x, event.y)
                             }
                         }
@@ -1368,8 +1385,10 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             isPanningOnly = true  // stepZoom 차단 (핀치 줌은 계속 작동)
                         }
 
-                        translateX += dx
-                        translateY += dy
+                        // ⚡ 확대 시 팬 속도 1.8배 (확대할수록 빠르게 이동)
+                        val panMultiplier = if (scaleFactor > 3f) 1.8f else 1f
+                        translateX += dx * panMultiplier
+                        translateY += dy * panMultiplier
 
                         lastTouchX = centroidX
                         lastTouchY = centroidY
@@ -1388,44 +1407,74 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
 
             MotionEvent.ACTION_UP -> {
-                val timeSinceDown = System.currentTimeMillis() - touchDownTime
-                // 🐛 두 손가락 제스처 종료 후 600ms 동안 색칠 차단 (이동 후 색칠 방지)
-                val timeSinceMultiTouch = System.currentTimeMillis() - lastMultiTouchEndTime
+                val now = System.currentTimeMillis()
+                val timeSinceDown = now - touchDownTime
+                val timeSinceMultiTouch = now - lastMultiTouchEndTime
                 val isMultiTouchCooldown = timeSinceMultiTouch < 600L
 
-                // ⚡ 빠른 탭: 300ms 이내, 이동 없음, 두 손가락 아님, 줌 아님 → 색칠
-                // 🐛 줌 중이거나 핀치 직후면 색칠 차단
-                // 🐛 두 손가락이 사용된 세션이면 색칠 차단
-                if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && !wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
+                if (isDoubleTapHoldZoom) {
+                    if (!hasMoved) {
+                        // 더블탭 → 스텝 확대 (최대면 축소로 전환)
+                        if (scaleFactor >= maxZoom * 0.95f) {
+                            stepZoom(event.x, event.y, zoomIn = false)
+                        } else {
+                            stepZoom(event.x, event.y, zoomIn = true)
+                        }
+                    }
+                    isDoubleTapHoldZoom = false
+                    syncZoomIndex()
+                    lastSingleTapTime = 0L
+                } else if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && !wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
                     handlePainting(event.x, event.y)
                 }
+
+                // 탭 기록 (더블탭 감지용)
+                if (!wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
+                    lastSingleTapTime = now
+                    lastSingleTapX = event.x
+                    lastSingleTapY = event.y
+                }
+                android.util.Log.d("ZoomDebug", "UP: doubleTapHold=$isDoubleTapHoldZoom, timeSinceDown=$timeSinceDown, hasMoved=$hasMoved, multiTouch=$wasMultiTouchInSession, cooldown=$isMultiTouchCooldown, preventPaint=$preventPaintOnce")
 
                 touchMode = TouchMode.NONE
                 activePointerId = -1
                 preventPaintOnce = false
                 allowPainting = false
                 hasMoved = false
-                isPanningOnly = false  // 🐛 팬 모드 리셋
-                isSingleFingerPanning = false  // 🐛 한 손가락 팬 모드 리셋
+                isPanningOnly = false
+                isSingleFingerPanning = false
                 initialSpanForPanCheck = 0f
 
                 lastPaintedCellIndex = -1
                 lastPaintedRow = -1
                 lastPaintedCol = -1
-                // ⚡ 터치 종료 시 남은 이벤트 즉시 처리
-                flushEraseEvents()  // X 제거 이벤트
-                flushPendingEventsWithColor()  // 일반 색칠 이벤트
+                flushEraseEvents()
+                flushPendingEventsWithColor()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
                 if (event.pointerCount == 2) {
-                    // ⚡ 최적화: 상세 로그 제거 (onScaleEnd에서 처리)
+                    val now = System.currentTimeMillis()
+                    val twoFingerDuration = now - twoFingerTapStartTime
+                    val panDist = kotlin.math.sqrt(
+                        (twoFingerLastX - twoFingerStartX) * (twoFingerLastX - twoFingerStartX) +
+                        (twoFingerLastY - twoFingerStartY) * (twoFingerLastY - twoFingerStartY)
+                    )
+                    val spanRatio = if (pinchStartSpan > 0f) {
+                        val dx = event.getX(0) - event.getX(1)
+                        val dy = event.getY(0) - event.getY(1)
+                        val endSpan = kotlin.math.sqrt(dx * dx + dy * dy)
+                        endSpan / pinchStartSpan
+                    } else 1f
+                    val isQuickTap = twoFingerDuration < 400L && panDist < 80f && spanRatio > 0.85f && spanRatio < 1.15f
+
                     touchMode = TouchMode.NONE
                     preventPaintOnce = true
                     allowPainting = false
-                    lastMultiTouchEndTime = System.currentTimeMillis()
+                    lastMultiTouchEndTime = now
                     isPanningOnly = false
                     initialSpanForPanCheck = 0f
+                    syncZoomIndex()
                 }
             }
 
@@ -1504,8 +1553,13 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 paintSingleCell(row, col)
             }
 
-            // ⚡ 스로틀링된 invalidate (빠른 색칠 시 크래시 방지)
-            throttledInvalidate()
+            // ⚡ 색칠 시 즉시 화면 갱신 (딜레이 제거)
+            // 대형 그리드에서만 스로틀링 (RenderThread 크래시 방지)
+            if (isLargeGridMode) {
+                throttledInvalidate()
+            } else {
+                invalidate()
+            }
 
             lastPaintedCellIndex = cellIndex
             lastPaintedRow = row
@@ -1651,11 +1705,11 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // 이미 예약된 배치 전송이 있으면 이벤트만 추가
         if (batchEventRunnable != null) return
 
-        // ⚡ 100ms 후 JS 이벤트 배치 전송
+        // ⚡ 200ms 후 JS 이벤트 배치 전송 (JS 리렌더링 빈도 낮춰 Native 렌더링 우선)
         batchEventRunnable = Runnable {
             flushPendingEventsWithColor()
         }
-        postDelayed(batchEventRunnable, 100)
+        postDelayed(batchEventRunnable, 200)
     }
 
     private fun flushPendingEventsWithColor() {

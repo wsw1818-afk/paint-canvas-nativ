@@ -76,7 +76,6 @@ import { showPuzzleSelectAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import TexturePickerModal from '../components/TexturePickerModal';
 import { TEXTURES } from '../utils/textureStorage';
-import { useFocusEffect } from '@react-navigation/native';
 
 export default function GalleryScreen({ navigation }) {
   const [puzzles, setPuzzles] = useState([]);
@@ -456,7 +455,7 @@ export default function GalleryScreen({ navigation }) {
               : puzzle.imageUri ? 'IMAGE' 
               : 'BASE64';
             
-            if ((puzzle.progress || 0) >= 100) {
+            if (__DEV__ && (puzzle.progress || 0) >= 100) {
               console.log(`[GalleryScreen] 🔍 [${puzzle.id}] 타입: ${imageType}, completedImageUri: ${puzzle.completedImageUri ? '있음' : '없음'}, URI: ${thumbnailUri?.substring(0, 40)}...`);
             }
 

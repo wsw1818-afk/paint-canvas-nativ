@@ -1,1 +1,1 @@
-🐛 wrongCells 오판 재검증: Native 복원 시 칠한 색상=정답 색상인 셀을 wrongCells에서 자동 제거 + JS 동기화 (disperseColorDistribution 잔재 정리)
+✨ 줌 UX 개선(기획안B): 더블탭 스텝줌 + 더블탭홀드 연속줌 + 핀치 연속줌 + 두손가락 팬

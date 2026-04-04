@@ -22,9 +22,15 @@
 - 빌드/배포 제약:
   - 배포 경로: `D:\OneDrive\코드작업\결과물\ColorPlay\`
   - 키스토어: `android/app/release.keystore` (백업: 결과물/키스토어/)
+  - EAS production Android 빌드 타입: `app-bundle` (AAB)
+  - Android release 최적화 플래그 사용:
+    - `android.enableMinifyInReleaseBuilds=true`
+    - `android.enableShrinkResourcesInReleaseBuilds=true`
+    - `android.enableBundleCompression=true`
 - 성능/번들 제약:
   - Native Canvas 모듈 사용 (paint-canvas-native)
   - 대용량 이미지 처리 시 메모리 관리 필요
+  - JS production 번들에서 `console` 로그 제거(`error`, `warn` 제외)
 - 금지사항:
   - 정식 AdMob ID를 테스트 기기에서 사용 금지
   - JS/TS 외 네이티브 코드 변경 시 prebuild 필수
@@ -64,8 +70,10 @@
 - 통과 기준(lint/typecheck/test):
   - 현재 테스트 프레임워크 미설정 (향후 Jest 도입 권장)
   - TypeScript 타입 체크: `tsc --noEmit`
+  - 설정 정합성 체크: `npx expo-doctor` (현재 17/17 통과)
 - 릴리즈 체크리스트 위치: `.claude/CLAUDE.md` 참고
   - [ ] AdMob ID 정식 ID로 변경
+  - [ ] iOS AdMob `iosAppId` 설정 (미설정 시 iOS 크래시 가능)
   - [ ] JS 번들 검증 (APK 내 index.android.bundle)
   - [ ] 4가지 캐시 삭제 후 clean 빌드
   - [ ] 결과물 폴더에 복사

@@ -787,6 +787,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
   // 🔧 Native 로그를 Metro 터널로 전달 (console.log)
   const handleNativeLog = useCallback((event) => {
+    if (!__DEV__) return;
     const { tag, message } = event.nativeEvent;
     console.log(`[${tag}] ${message}`);
   }, []);
@@ -1287,7 +1288,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               onCellPainted={handleCellPainted}
               onCanvasReady={handleCanvasReady}
               onDebugLog={handleDebugLog}
-              onNativeLog={handleNativeLog}
+              onNativeLog={__DEV__ ? handleNativeLog : undefined}
             />
           </View>
 
@@ -1378,7 +1379,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
             onDebugLog={handleDebugLog}
-            onNativeLog={handleNativeLog}
+            onNativeLog={__DEV__ ? handleNativeLog : undefined}
             onViewportChange={handleViewportChange}
           />
 
