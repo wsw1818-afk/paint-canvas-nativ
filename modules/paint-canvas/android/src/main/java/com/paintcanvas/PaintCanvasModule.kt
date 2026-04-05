@@ -30,6 +30,11 @@ class PaintCanvasModule : Module() {
       currentView?.setViewportPosition(x, y, zoom)
     }
 
+    // 📱 줌 배율 즉시 적용 (UI 버튼용)
+    Function("setZoomLevel") { level: Float ->
+      currentView?.setMaxZoomLevel(level)
+    }
+
     // 🗑️ 특정 gameId의 진행 상황 삭제 (갤러리 리셋 시 JS에서 호출)
     Function("clearProgressForGame") { gameId: String ->
       currentView?.clearProgressForGame(gameId)
@@ -107,6 +112,12 @@ class PaintCanvasModule : Module() {
       Prop("completionMode") { view: PaintCanvasView, mode: String ->
         view.setCompletionMode(mode)
       }
+
+      Prop("maxZoomLevel") { view: PaintCanvasView, level: Double ->
+        view.setMaxZoomLevel(level.toFloat())
+      }
+
+      // zoomTrigger 제거 - maxZoomLevel에 소수점 카운터 포함하여 항상 변경 감지
 
       // 🎨 사용자 선택 텍스처 URI
       Prop("textureUri") { view: PaintCanvasView, uri: String? ->

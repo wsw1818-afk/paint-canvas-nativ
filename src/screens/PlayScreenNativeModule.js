@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions, ScrollView, useWindowDimensions, ActivityIndicator, PixelRatio, InteractionManager, Alert, Image, StatusBar, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition, clearProgressForGame } from 'paint-canvas-native';
+import { PaintCanvasView, captureCanvas, captureThumbnail, getMinimapImage, setViewportPosition, clearProgressForGame, setZoomLevel } from 'paint-canvas-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { updatePuzzle } from '../utils/puzzleStorage';
@@ -10,6 +10,7 @@ import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import { addPoints, getPuzzleCost } from '../utils/pointsStorage';
+import { ZOOM_PRESETS, getZoomPresetId, getZoomPreset } from '../utils/zoomSettings';
 
 // 🎯 광고 ID 설정
 // - 정식 ID (플레이스토어): 'ca-app-pub-8246295829048098/7057199542'
@@ -239,6 +240,20 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   const [everWrongCells, setEverWrongCells] = useState(new Set()); // 한 번이라도 틀린 셀 (재색칠 시 점수 X)
   const [undoMode, setUndoMode] = useState(false); // 고치기 모드
   const [viewDimensions, setViewDimensions] = useState({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }); // 전체 화면 크기 (dp)
+  // 🔍 줌 배율 설정
+  const [currentMaxZoom, setCurrentMaxZoom] = useState(9);
+  const [currentZoomPresetId, setCurrentZoomPresetId] = useState('medium');
+  const [zoomTrigger, setZoomTrigger] = useState(0); // prop 변경 감지용 카운터
+
+  // 줌 설정 로드
+  useEffect(() => {
+    getZoomPresetId().then(id => {
+      const preset = getZoomPreset(id);
+      setCurrentMaxZoom(preset.maxZoom);
+      setCurrentZoomPresetId(id);
+    });
+  }, []);
+
   // 🔍 디버그 로그 상태 (프로덕션에서는 비활성화)
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebugPanel, setShowDebugPanel] = useState(__DEV__ ? false : false); // 기본 비활성화 (성능)
@@ -1284,6 +1299,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               undoMode={undoMode}
               viewSize={viewDimensions}
               completionMode={completionMode}
+              maxZoomLevel={currentMaxZoom + zoomTrigger * 0.001}
               clearProgress={isReset || false}
               onCellPainted={handleCellPainted}
               onCanvasReady={handleCanvasReady}
@@ -1347,6 +1363,32 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           </TouchableOpacity>
         )}
 
+        {/* 🔍 줌 배율 선택 버튼 */}
+        <View style={styles.zoomButtonsContainer}>
+          {ZOOM_PRESETS.map((preset) => (
+            <TouchableOpacity
+              key={preset.id}
+              style={[
+                styles.zoomButton,
+                currentZoomPresetId === preset.id && styles.zoomButtonActive,
+              ]}
+              onPress={() => {
+                const newZoom = preset.maxZoom;
+                setCurrentMaxZoom(newZoom);
+                setCurrentZoomPresetId(preset.id);
+                setZoomTrigger(prev => prev + 1);
+              }}
+            >
+              <Text style={[
+                styles.zoomButtonText,
+                currentZoomPresetId === preset.id && styles.zoomButtonTextActive,
+              ]}>
+                {preset.maxZoom}x
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
         {/* 🗺️ 미니맵 토글 버튼 */}
         <TouchableOpacity
           style={[styles.minimapToggle, showMinimap && styles.minimapToggleActive]}
@@ -1375,6 +1417,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             undoMode={undoMode}
             viewSize={viewDimensions}
             completionMode={completionMode}
+            maxZoomLevel={currentMaxZoom}
             clearProgress={isReset || false}
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
@@ -1909,6 +1952,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 12,
     fontWeight: '500',
+  },
+  // 🔍 줌 배율 버튼 스타일
+  zoomButtonsContainer: {
+    flexDirection: 'row',
+    gap: 4,
+    marginRight: 8,
+  },
+  zoomButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: SpotifyColors.backgroundElevated,
+    borderRadius: SpotifyRadius.sm,
+    borderWidth: 1,
+    borderColor: SpotifyColors.divider,
+  },
+  zoomButtonActive: {
+    backgroundColor: SpotifyColors.primary,
+    borderColor: SpotifyColors.primary,
+  },
+  zoomButtonText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: SpotifyColors.textSecondary,
+  },
+  zoomButtonTextActive: {
+    color: SpotifyColors.background,
   },
   // 🗺️ 미니맵 토글 버튼 스타일
   minimapToggle: {

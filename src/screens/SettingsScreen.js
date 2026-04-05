@@ -11,19 +11,27 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { LANGUAGES, getLanguage, setLanguage, t, addLanguageChangeListener } from '../locales';
+import { ZOOM_PRESETS, getZoomPresetId, setZoomPresetId } from '../utils/zoomSettings';
 
 export default function SettingsScreen({ navigation }) {
   const [currentLang, setCurrentLang] = useState(getLanguage());
   const [showLanguageModal, setShowLanguageModal] = useState(false);
   const [, forceUpdate] = useState(0);
+  const [currentZoomPreset, setCurrentZoomPreset] = useState('medium');
+  const [showZoomModal, setShowZoomModal] = useState(false);
 
   // 언어 변경 리스너
   useEffect(() => {
     const unsubscribe = addLanguageChangeListener((newLang) => {
       setCurrentLang(newLang);
-      forceUpdate((n) => n + 1); // 화면 갱신
+      forceUpdate((n) => n + 1);
     });
     return unsubscribe;
+  }, []);
+
+  // 줌 설정 로드
+  useEffect(() => {
+    getZoomPresetId().then(setCurrentZoomPreset);
   }, []);
 
   // 언어 선택 핸들러
@@ -32,8 +40,16 @@ export default function SettingsScreen({ navigation }) {
     setShowLanguageModal(false);
   };
 
+  // 줌 선택 핸들러
+  const handleSelectZoom = async (presetId) => {
+    await setZoomPresetId(presetId);
+    setCurrentZoomPreset(presetId);
+    setShowZoomModal(false);
+  };
+
   // 현재 선택된 언어 정보
   const currentLanguageInfo = LANGUAGES.find((l) => l.code === currentLang) || LANGUAGES[0];
+  const currentZoomInfo = ZOOM_PRESETS.find((z) => z.id === currentZoomPreset) || ZOOM_PRESETS[1];
 
   return (
     <View style={styles.container}>
@@ -66,6 +82,26 @@ export default function SettingsScreen({ navigation }) {
               <View style={styles.settingRight}>
                 <Text style={styles.settingValue}>
                   {currentLanguageInfo.flag} {currentLanguageInfo.name}
+                </Text>
+                <Text style={styles.chevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* 확대 배율 설정 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🔍 확대 배율</Text>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => setShowZoomModal(true)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingLabel}>기본 확대 배율</Text>
+                <Text style={styles.settingDesc}>색칠 화면의 최대 확대 수준</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>
+                  {currentZoomInfo.label}
                 </Text>
                 <Text style={styles.chevron}>›</Text>
               </View>
@@ -147,6 +183,52 @@ export default function SettingsScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.modalCancel}
                 onPress={() => setShowLanguageModal(false)}
+              >
+                <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+        {/* 줌 배율 선택 모달 */}
+        <Modal
+          visible={showZoomModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowZoomModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowZoomModal(false)}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>🔍 확대 배율 선택</Text>
+              {ZOOM_PRESETS.map((preset) => (
+                <TouchableOpacity
+                  key={preset.id}
+                  style={[
+                    styles.languageItem,
+                    preset.id === currentZoomPreset && styles.languageItemSelected,
+                  ]}
+                  onPress={() => handleSelectZoom(preset.id)}
+                >
+                  <Text style={styles.languageFlag}>🔍</Text>
+                  <Text
+                    style={[
+                      styles.languageName,
+                      preset.id === currentZoomPreset && styles.languageNameSelected,
+                    ]}
+                  >
+                    {preset.label}
+                  </Text>
+                  {preset.id === currentZoomPreset && (
+                    <Text style={styles.checkmark}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={() => setShowZoomModal(false)}
               >
                 <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>

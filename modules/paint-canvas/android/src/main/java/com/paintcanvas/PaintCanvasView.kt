@@ -143,15 +143,42 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         // canvasWidth should be set by setViewSize() from JavaScript
         cellSize = canvasWidth / gridSize
 
-        // 난이도별 최대 줌 설정
-        // 최대 줌 14x
-        maxZoom = 14f
-        // 모든 난이도에서 1x ↔ 80% 두 단계만 순환
+        // maxZoom은 JS의 maxZoomLevel prop으로 제어 (하드코딩 제거)
+        // 기본값은 클래스 초기값(15f) 또는 JS에서 설정한 값 유지
         val zoomAt80Percent = maxZoom * 0.8f
-        ZOOM_LEVELS = floatArrayOf(1f, zoomAt80Percent)  // 1x ↔ 80%
-        android.util.Log.d("PaintCanvas", "📐 gridSize=$gridSize, maxZoom=$maxZoom, Zoom levels: ${ZOOM_LEVELS.toList()}")
+        ZOOM_LEVELS = floatArrayOf(1f, zoomAt80Percent)
+        android.util.Log.d("PaintCanvas", "📐 gridSize=$gridSize, maxZoom=$maxZoom")
 
         invalidate()
+    }
+
+    // 📱 JS에서 전달된 maxZoom 설정
+    fun setMaxZoomLevel(level: Float) {
+        if (level > 0f) {
+            val roundedLevel = kotlin.math.round(level)
+            android.util.Log.w("PaintCanvas", "📱 setMaxZoomLevel: raw=$level, rounded=$roundedLevel, scaleFactor=$scaleFactor")
+            maxZoom = roundedLevel
+            val zoomAt80Percent = maxZoom * 0.8f
+            ZOOM_LEVELS = floatArrayOf(1f, zoomAt80Percent)
+            applyCurrentZoom()
+        }
+    }
+
+    // 📱 현재 maxZoom으로 즉시 줌 적용 (zoomTrigger prop에서 호출)
+    fun applyCurrentZoom() {
+        if (canvasWidth > 0 && canvasViewWidth > 0) {
+            val targetScale = maxZoom.coerceIn(1f, maxZoom)
+            val centerX = canvasViewWidth / 2f
+            val centerY = canvasViewHeight / 2f
+            translateX = centerX - (centerX - translateX) * (targetScale / scaleFactor)
+            translateY = centerY - (centerY - translateY) * (targetScale / scaleFactor)
+            scaleFactor = targetScale
+            pendingViewportRestore = null
+            applyBoundaries()
+            syncZoomIndex()
+            invalidate()
+            android.util.Log.w("PaintCanvas", "📱 applyCurrentZoom: scaleFactor=$scaleFactor, maxZoom=$maxZoom")
+        }
     }
 
     // ⚡ 셀 데이터 임시 저장 (gridSize 설정 후 인덱스 재계산용)
@@ -808,7 +835,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
     // 3-step zoom levels: 1x ↔ 80% ↔ 100%
     private var ZOOM_LEVELS = floatArrayOf(1f, 12f, 15f)  // 1x, 80% (12x), 100% (15x)
-    private var maxZoom = 15f
+    private var maxZoom = 9f  // 기본값, JS maxZoomLevel prop으로 변경됨
     private var currentZoomIndex = 0
     private var twoFingerTapStartTime = 0L
     private var touchDownTime = 0L  // Time of initial ACTION_DOWN
@@ -911,11 +938,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         currentZoomIndex = closestIndex
     }
 
-    // Step zoom: 1x → 70% → 85% → 95% → 100% (축소는 역순)
-    // 줌 레벨: [1x, 70%, 85%, 95%, 100%] of maxZoom
-    // 줌 단계: 1x → 7.5x → 14x (총 3단계)
-    private val STEP_ZOOM_LEVELS = floatArrayOf(1f, 7.5f, 14f)
-
+    // Step zoom: 1x → 중간 → maxZoom (동적 3단계)
     private fun stepZoom(focusX: Float, focusY: Float, zoomIn: Boolean = true) {
         val now = System.currentTimeMillis()
         val timeSinceLastZoom = now - lastStepZoomTime
@@ -924,7 +947,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         if (timeSinceLastZoom < STEP_ZOOM_COOLDOWN) return
         lastStepZoomTime = now
 
-        val levels = STEP_ZOOM_LEVELS
+        // maxZoom 기준 동적 레벨: 1x → 중간(50%) → maxZoom
+        val mid = maxZoom * 0.5f
+        val levels = floatArrayOf(1f, mid, maxZoom)
 
         // 현재 스케일에 가장 가까운 레벨 인덱스 찾기
         var closestIdx = 0
@@ -1268,22 +1293,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 wasMultiTouchInSession = false
                 isSingleFingerPanning = false
 
-                // 📱 한 손가락 더블탭 감지
-                val now = System.currentTimeMillis()
-                val timeSinceLastTap = now - lastSingleTapTime
-                val distFromLastTap = kotlin.math.sqrt(
-                    (event.x - lastSingleTapX) * (event.x - lastSingleTapX) +
-                    (event.y - lastSingleTapY) * (event.y - lastSingleTapY)
-                )
-                if (timeSinceLastTap < DOUBLE_TAP_TIMEOUT && distFromLastTap < DOUBLE_TAP_SLOP) {
-                    isDoubleTapHoldZoom = true
-                    doubleTapHoldStartY = event.y
-                    doubleTapHoldStartScale = scaleFactor
-                    doubleTapFocusX = event.x
-                    doubleTapFocusY = event.y
-                    preventPaintOnce = true
-                    allowPainting = false
-                }
+                // 더블탭 확대 제거됨 - 줌은 핀치 + UI 버튼으로만 조작
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
@@ -1314,27 +1324,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             MotionEvent.ACTION_MOVE -> {
                 when (event.pointerCount) {
                     1 -> {
-                        // 📱 더블탭+홀드 줌 모드: 위/아래 드래그로 연속 줌
-                        if (isDoubleTapHoldZoom) {
-                            val dy = doubleTapHoldStartY - event.y  // 위로 드래그 = 양수 = 확대
-                            // 20px 이상 움직여야 줌 시작 (짧은 더블탭과 구분)
-                            if (kotlin.math.abs(dy) > 20f) {
-                                val zoomSensitivity = 0.005f
-                                val newScale = (doubleTapHoldStartScale * (1f + dy * zoomSensitivity)).coerceIn(1f, maxZoom)
-                                if (kotlin.math.abs(newScale - scaleFactor) > 0.01f) {
-                                    val fx = doubleTapFocusX
-                                    val fy = doubleTapFocusY
-                                    translateX = fx - (fx - translateX) * (newScale / scaleFactor)
-                                    translateY = fy - (fy - translateY) * (newScale / scaleFactor)
-                                    scaleFactor = newScale
-                                    applyBoundaries()
-                                    invalidate()
-                                }
-                                hasMoved = true
-                            }
-                            return true
-                        }
-
                         // 🐛 두 손가락이 한 번이라도 사용되었으면 이 세션 동안 색칠 완전 차단
                         if (wasMultiTouchInSession) {
                             val dx = event.x - lastTouchX
@@ -1412,29 +1401,9 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                 val timeSinceMultiTouch = now - lastMultiTouchEndTime
                 val isMultiTouchCooldown = timeSinceMultiTouch < 600L
 
-                if (isDoubleTapHoldZoom) {
-                    if (!hasMoved) {
-                        // 더블탭 → 스텝 확대 (최대면 축소로 전환)
-                        if (scaleFactor >= maxZoom * 0.95f) {
-                            stepZoom(event.x, event.y, zoomIn = false)
-                        } else {
-                            stepZoom(event.x, event.y, zoomIn = true)
-                        }
-                    }
-                    isDoubleTapHoldZoom = false
-                    syncZoomIndex()
-                    lastSingleTapTime = 0L
-                } else if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && !wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
+                if (!preventPaintOnce && !isPinching && touchMode != TouchMode.ZOOM && !isMultiTouchCooldown && !wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
                     handlePainting(event.x, event.y)
                 }
-
-                // 탭 기록 (더블탭 감지용)
-                if (!wasMultiTouchInSession && timeSinceDown < 300L && !hasMoved) {
-                    lastSingleTapTime = now
-                    lastSingleTapX = event.x
-                    lastSingleTapY = event.y
-                }
-                android.util.Log.d("ZoomDebug", "UP: doubleTapHold=$isDoubleTapHoldZoom, timeSinceDown=$timeSinceDown, hasMoved=$hasMoved, multiTouch=$wasMultiTouchInSession, cooldown=$isMultiTouchCooldown, preventPaint=$preventPaintOnce")
 
                 touchMode = TouchMode.NONE
                 activePointerId = -1
@@ -1887,8 +1856,7 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
 
         // 🎯 줌 레벨이 지정되면 먼저 적용
         if (zoom != null && zoom > 0) {
-            // ZOOM_LEVELS[0] = 1x (최소), ZOOM_LEVELS.last() = 최대 줌
-            scaleFactor = zoom.coerceIn(ZOOM_LEVELS[0], ZOOM_LEVELS.last())
+            scaleFactor = zoom.coerceIn(1f, maxZoom)
         }
 
         val scaledCanvasWidth = canvasWidth * scaleFactor

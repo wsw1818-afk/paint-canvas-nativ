@@ -70,4 +70,12 @@ export function clearProgressForGame(gameId: string): void {
   PaintCanvasModule.clearProgressForGame(gameId);
 }
 
+/**
+ * 📱 줌 배율 즉시 적용 (UI 버튼용)
+ * @param level 목표 줌 배율 (예: 5, 9, 14)
+ */
+export function setZoomLevel(level: number): void {
+  PaintCanvasModule.setZoomLevel(level);
+}
+
 export const PaintCanvasView = requireNativeViewManager<PaintCanvasProps>('PaintCanvas');
