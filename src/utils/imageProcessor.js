@@ -225,7 +225,7 @@ export function extractDominantColors(pixels, k = 8) {
   console.log(`🎨 K-Means++ 색상 추출 시작 (픽셀: ${pixels.length}개, 목표: ${k}개 색상)`);
 
   // 1. 색상 양자화로 고유 색상 수 줄이기 (성능 최적화)
-  const quantizedPixels = quantizeColors(pixels, 32); // 32단계 양자화
+  const quantizedPixels = quantizeColors(pixels, 64); // 64단계 양자화 (원본에 가깝게)
   console.log(`📊 양자화 후 고유 색상: ${quantizedPixels.length}개`);
 
   // 2. K-Means++ 초기화로 시작점 선택
@@ -245,7 +245,7 @@ export function extractDominantColors(pixels, k = 8) {
     .sort((a, b) => b.count - a.count);
 
   // 5. 너무 비슷한 색상 병합
-  const mergedColors = mergeSimilarColors(sortedResults, 25); // RGB 거리 25 이내 병합
+  const mergedColors = mergeSimilarColors(sortedResults, 15); // Lab 거리 15 이내만 병합 (원본 색상 보존)
 
   console.log(`🔀 병합 후 색상: ${mergedColors.length}개`);
 
@@ -748,7 +748,7 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
           const lightDiff = Math.abs(cellLab.L - colorLab.L);
           let lightWeight = 1.0;
           if ((cellLab.L < 25 && colorLab.L >= 25) || (colorLab.L < 25 && cellLab.L >= 25)) {
-            lightWeight = 2.5;
+            lightWeight = 1.5;  // 명도 차이 가중치 완화 (원본 색상에 가깝게)
           }
 
           const dist = Math.sqrt(
@@ -807,9 +807,9 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 function optimizePixelsForColoring(pixelData, width, height) {
   const optimized = new Uint8Array(pixelData.length);
 
-  // 🎨 채도 강화 설정 (더 진하고 어둡게)
-  const SATURATION_BOOST = 2.0;  // 채도 100% 증가 (매우 진하게)
-  const VALUE_BOOST = 0.90;       // 명도 10% 감소 (더 어둡게)
+  // 🎨 채도/명도 미세 조정 (원본에 가깝게)
+  const SATURATION_BOOST = 1.3;  // 채도 30% 증가 (자연스럽게)
+  const VALUE_BOOST = 0.95;       // 명도 5% 감소 (약간만 어둡게)
 
   for (let i = 0; i < pixelData.length; i += 4) {
     const r = pixelData[i];

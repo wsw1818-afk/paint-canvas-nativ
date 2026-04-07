@@ -156,7 +156,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
     fun setMaxZoomLevel(level: Float) {
         if (level > 0f) {
             val roundedLevel = kotlin.math.round(level)
-            android.util.Log.w("PaintCanvas", "📱 setMaxZoomLevel: raw=$level, rounded=$roundedLevel, scaleFactor=$scaleFactor")
             maxZoom = roundedLevel
             val zoomAt80Percent = maxZoom * 0.8f
             ZOOM_LEVELS = floatArrayOf(1f, zoomAt80Percent)
@@ -177,7 +176,6 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             applyBoundaries()
             syncZoomIndex()
             invalidate()
-            android.util.Log.w("PaintCanvas", "📱 applyCurrentZoom: scaleFactor=$scaleFactor, maxZoom=$maxZoom")
         }
     }
 
@@ -1240,7 +1238,20 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
         }
 
-        // 3. Draw grid - 격자선 제거 (셀 사이 공백 없음)
+        // 3. 격자선 그리기 (확대 시에만 표시 - 셀이 20px 이상일 때)
+        if (screenCellSize > 20f) {
+            gridPaint.strokeWidth = if (screenCellSize > 40f) 0.5f else 0.3f
+            gridPaint.alpha = if (screenCellSize > 40f) 80 else 40
+            for (row in startRow..endRow + 1) {
+                val y = row * cellSize
+                canvas.drawLine(startCol * cellSize, y, (endCol + 1) * cellSize, y, gridPaint)
+            }
+            for (col in startCol..endCol + 1) {
+                val x = col * cellSize
+                canvas.drawLine(x, startRow * cellSize, x, (endRow + 1) * cellSize, gridPaint)
+            }
+            gridPaint.alpha = 255
+        }
 
         // 🚨 1x 배율에서 틀린 셀 빨간 원으로 깜빡임 표시
         if (wrongCellIndices.isNotEmpty() && scaleFactor <= 1.5f && wrongCellFlashVisible) {
