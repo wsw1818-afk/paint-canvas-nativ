@@ -7,11 +7,13 @@ import {
   StatusBar,
   Modal,
   FlatList,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
 import { LANGUAGES, getLanguage, setLanguage, t, addLanguageChangeListener } from '../locales';
-import { ZOOM_PRESETS, getZoomPresetId, setZoomPresetId } from '../utils/zoomSettings';
+import { ZOOM_PRESETS, getZoomPresetId, setZoomPresetId, GALLERY_IMAGE_MODES, getGalleryImageMode, setGalleryImageMode, getGridLinesEnabled, setGridLinesEnabled } from '../utils/zoomSettings';
+import { resetPlayTutorial } from '../components/PlayTutorial';
 
 export default function SettingsScreen({ navigation }) {
   const [currentLang, setCurrentLang] = useState(getLanguage());
@@ -19,6 +21,9 @@ export default function SettingsScreen({ navigation }) {
   const [, forceUpdate] = useState(0);
   const [currentZoomPreset, setCurrentZoomPreset] = useState('medium');
   const [showZoomModal, setShowZoomModal] = useState(false);
+  const [currentGalleryMode, setCurrentGalleryMode] = useState('original');
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [gridLinesOn, setGridLinesOn] = useState(false);
 
   // 언어 변경 리스너
   useEffect(() => {
@@ -29,9 +34,11 @@ export default function SettingsScreen({ navigation }) {
     return unsubscribe;
   }, []);
 
-  // 줌 설정 로드
+  // 줌 + 갤러리 + 격자선 설정 로드
   useEffect(() => {
     getZoomPresetId().then(setCurrentZoomPreset);
+    getGalleryImageMode().then(setCurrentGalleryMode);
+    getGridLinesEnabled().then(setGridLinesOn);
   }, []);
 
   // 언어 선택 핸들러
@@ -47,9 +54,17 @@ export default function SettingsScreen({ navigation }) {
     setShowZoomModal(false);
   };
 
+  // 갤러리 이미지 모드 핸들러
+  const handleSelectGalleryMode = async (modeId) => {
+    await setGalleryImageMode(modeId);
+    setCurrentGalleryMode(modeId);
+    setShowGalleryModal(false);
+  };
+
   // 현재 선택된 언어 정보
   const currentLanguageInfo = LANGUAGES.find((l) => l.code === currentLang) || LANGUAGES[0];
   const currentZoomInfo = ZOOM_PRESETS.find((z) => z.id === currentZoomPreset) || ZOOM_PRESETS[1];
+  const currentGalleryInfo = GALLERY_IMAGE_MODES.find((m) => m.id === currentGalleryMode) || GALLERY_IMAGE_MODES[0];
 
   return (
     <View style={styles.container}>
@@ -108,12 +123,57 @@ export default function SettingsScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
+          {/* 격자선 설정 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}># 격자선</Text>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={async () => {
+                const next = !gridLinesOn;
+                setGridLinesOn(next);
+                await setGridLinesEnabled(next);
+              }}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingLabel}>격자선 표시</Text>
+                <Text style={styles.settingDesc}>확대 시 셀 사이 격자선 표시</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={[styles.settingValue, { color: gridLinesOn ? '#4CD964' : SpotifyColors.textSecondary }]}>
+                  {gridLinesOn ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* 갤러리 이미지 설정 */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>🖼️ 갤러리 이미지</Text>
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => setShowGalleryModal(true)}
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingLabel}>이미지 표시 방식</Text>
+                <Text style={styles.settingDesc}>갤러리에서 보여줄 이미지 유형</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.settingValue}>
+                  {currentGalleryInfo.label}
+                </Text>
+                <Text style={styles.chevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
           {/* 도움말 섹션 */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('settings.help')}</Text>
             <TouchableOpacity
               style={styles.settingItem}
               onPress={() => navigation.navigate('Help')}
+              accessibilityLabel="도움말 화면 열기"
+              accessibilityRole="button"
             >
               <View style={styles.settingLeft}>
                 <Text style={styles.settingLabel}>{t('settings.help')}</Text>
@@ -121,6 +181,29 @@ export default function SettingsScreen({ navigation }) {
               </View>
               <View style={styles.settingRight}>
                 <Text style={styles.helpIcon}>📖</Text>
+                <Text style={styles.chevron}>›</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* 🎓 튜토리얼 다시 보기 */}
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={async () => {
+                const ok = await resetPlayTutorial();
+                Alert.alert(
+                  ok ? '튜토리얼 재설정 완료' : '오류',
+                  ok ? '다음 색칠 화면 진입 시 튜토리얼이 표시됩니다.' : '재설정에 실패했습니다.',
+                );
+              }}
+              accessibilityLabel="튜토리얼 다시 보기"
+              accessibilityRole="button"
+            >
+              <View style={styles.settingLeft}>
+                <Text style={styles.settingLabel}>튜토리얼 다시 보기</Text>
+                <Text style={styles.settingDesc}>색칠 화면 사용법을 처음부터 다시 보여드려요</Text>
+              </View>
+              <View style={styles.settingRight}>
+                <Text style={styles.helpIcon}>🎓</Text>
                 <Text style={styles.chevron}>›</Text>
               </View>
             </TouchableOpacity>
@@ -229,6 +312,55 @@ export default function SettingsScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.modalCancel}
                 onPress={() => setShowZoomModal(false)}
+              >
+                <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </Modal>
+
+        {/* 갤러리 이미지 모드 선택 모달 */}
+        <Modal
+          visible={showGalleryModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowGalleryModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowGalleryModal(false)}
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>🖼️ 갤러리 이미지</Text>
+              {GALLERY_IMAGE_MODES.map((mode) => (
+                <TouchableOpacity
+                  key={mode.id}
+                  style={[
+                    styles.languageItem,
+                    mode.id === currentGalleryMode && styles.languageItemSelected,
+                  ]}
+                  onPress={() => handleSelectGalleryMode(mode.id)}
+                >
+                  <Text style={styles.languageFlag}>
+                    {mode.id === 'original' ? '🖼️' : '🎨'}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.languageName,
+                      mode.id === currentGalleryMode && styles.languageNameSelected,
+                    ]}
+                  >
+                    {mode.label}
+                  </Text>
+                  {mode.id === currentGalleryMode && (
+                    <Text style={styles.checkmark}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.modalCancel}
+                onPress={() => setShowGalleryModal(false)}
               >
                 <Text style={styles.modalCancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>

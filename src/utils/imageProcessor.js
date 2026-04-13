@@ -245,7 +245,7 @@ export function extractDominantColors(pixels, k = 8) {
     .sort((a, b) => b.count - a.count);
 
   // 5. 너무 비슷한 색상 병합
-  const mergedColors = mergeSimilarColors(sortedResults, 15); // Lab 거리 15 이내만 병합 (원본 색상 보존)
+  const mergedColors = mergeSimilarColors(sortedResults, 20); // Lab 거리 20 이내 병합 (비슷한 색 합쳐서 선명한 팔레트)
 
   console.log(`🔀 병합 후 색상: ${mergedColors.length}개`);
 
@@ -780,8 +780,12 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
       console.log(`   ${i+1}. ${dominantColors[i]?.hex || '???'}: ${count}개 (${pct}%)`);
     });
 
-    // 4. 분산 처리 제거 - 원본 색상 유지 (분산이 잘못된 라벨 할당을 유발하여 "맞게 칠했는데 틀리다"는 버그 발생)
-    return { gridColors, dominantColors };
+    // 4. 큰 색상 영역을 원본 명암 기반으로 서브 색상 분할
+    const splitResult = splitLargeColorRegions(
+      gridColors, dominantColors, gridSize,
+      optimizedData, actualWidth, actualHeight, cellWidth, cellHeight
+    );
+    return { gridColors: splitResult.gridColors, dominantColors: splitResult.dominantColors };
   } catch (error) {
     console.error('Grid color extraction error:', error);
     // 에러 시 랜덤 색상으로 폴백
@@ -797,6 +801,179 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 }
 
 /**
+ * 큰 색상 영역을 원본 이미지의 명암 차이를 기반으로 서브 색상으로 분할
+ * 같은 "빨강"이라도 밝은/중간/어두운 빨강으로 나누어 색칠 재미 증가
+ *
+ * @param {Array<Array<number>>} gridColors - 격자별 색상 인덱스
+ * @param {Array} dominantColors - 추출된 주요 색상 배열
+ * @param {number} gridSize - 격자 크기
+ * @param {Uint8Array} pixelData - 최적화된 픽셀 데이터
+ * @param {number} imgWidth - 이미지 너비
+ * @param {number} imgHeight - 이미지 높이
+ * @param {number} cellWidth - 셀 너비 (픽셀)
+ * @param {number} cellHeight - 셀 높이 (픽셀)
+ * @returns {{ gridColors: Array<Array<number>>, dominantColors: Array }}
+ */
+function splitLargeColorRegions(gridColors, dominantColors, gridSize, pixelData, imgWidth, imgHeight, cellWidth, cellHeight) {
+  const totalCells = gridSize * gridSize;
+  const SPLIT_THRESHOLD = 0.03;     // 3% 이상이면 분할 대상 (더 공격적)
+  const MAX_SPLITS = 5;              // 최대 5분할 (3 → 5)
+  const MIN_CELLS_PER_SUB = 8;       // 서브 색상당 최소 셀 (너무 잘게 자르지 않기)
+  const MAX_TOTAL_COLORS = 64;       // 팔레트 상한 (COLOR_PALETTE 64색 지원)
+
+  // 1. 색상별 셀 개수 카운트
+  const colorCounts = {};
+  for (let row = 0; row < gridSize; row++) {
+    for (let col = 0; col < gridSize; col++) {
+      const ci = gridColors[row][col];
+      colorCounts[ci] = (colorCounts[ci] || 0) + 1;
+    }
+  }
+
+  // 2. 분할 대상 색상 찾기 - 비율 따라 차등 분할
+  //    15% 이상 → 5분할 (큰 영역 공격적 분할)
+  //    8% 이상  → 4분할
+  //    5% 이상  → 3분할
+  //    3% 이상  → 2분할
+  const splitTargets = [];
+  for (const [ci, count] of Object.entries(colorCounts)) {
+    const ratio = count / totalCells;
+    if (ratio >= SPLIT_THRESHOLD) {
+      let splits = 2;
+      if (ratio >= 0.15) splits = 5;
+      else if (ratio >= 0.08) splits = 4;
+      else if (ratio >= 0.05) splits = 3;
+
+      // 최소 셀 수 보장: splits * MIN_CELLS_PER_SUB 이상이어야 함
+      while (splits > 2 && count < splits * MIN_CELLS_PER_SUB) {
+        splits--;
+      }
+
+      splitTargets.push({ colorIndex: parseInt(ci), count, ratio, splits: Math.min(splits, MAX_SPLITS) });
+    }
+  }
+  // 큰 영역부터 처리 (상한에 도달해도 효과 큰 것부터 분할)
+  splitTargets.sort((a, b) => b.count - a.count);
+
+  if (splitTargets.length === 0) {
+    console.log('🎨 색상 분할: 대상 없음 (모든 색상이 3% 미만)');
+    return { gridColors, dominantColors };
+  }
+
+  console.log(`🎨 색상 분할 시작: ${splitTargets.length}개 색상 대상`);
+
+  // 3. 결과 배열 복사
+  const newGridColors = gridColors.map(row => [...row]);
+  const newDominantColors = [...dominantColors];
+  let nextColorIndex = newDominantColors.length;
+
+  // 4. 각 분할 대상 처리
+  for (const target of splitTargets) {
+    const { colorIndex, splits } = target;
+    const baseColor = dominantColors[colorIndex];
+    if (!baseColor) continue;
+
+    // 해당 색상의 모든 셀에서 원본 픽셀 밝기 수집
+    const cellBrightness = [];
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        if (gridColors[row][col] !== colorIndex) continue;
+
+        // 셀 중앙 픽셀의 밝기 계산
+        const cx = Math.min(imgWidth - 1, Math.floor((col + 0.5) * cellWidth));
+        const cy = Math.min(imgHeight - 1, Math.floor((row + 0.5) * cellHeight));
+        const idx = (cy * imgWidth + cx) * 4;
+        const r = pixelData[idx] || 0;
+        const g = pixelData[idx + 1] || 0;
+        const b = pixelData[idx + 2] || 0;
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; // ITU-R BT.601
+        cellBrightness.push({ row, col, brightness });
+      }
+    }
+
+    if (cellBrightness.length < splits * 2) continue; // 너무 적으면 스킵
+
+    // 색상 수 상한 체크: 추가로 필요한 색은 splits-1개 (기본 인덱스는 재사용)
+    const remainingBudget = MAX_TOTAL_COLORS - newDominantColors.length;
+    const actualSplits = Math.min(splits, 1 + Math.max(1, remainingBudget));
+    if (actualSplits < 2) {
+      console.log(`   ⚠️ 상한 도달 (${newDominantColors.length}/${MAX_TOTAL_COLORS}) - ${baseColor.hex} 분할 스킵`);
+      continue;
+    }
+
+    // 밝기 기준 정렬
+    cellBrightness.sort((a, b) => a.brightness - b.brightness);
+
+    // 밝기 구간별 서브 색상 생성
+    const segmentSize = Math.floor(cellBrightness.length / actualSplits);
+    const baseHsl = rgbToHsl(baseColor.r, baseColor.g, baseColor.b);
+
+    // actualSplits에 따라 명도 오프셋 배분 (-10 ~ +10 범위를 균등 분할)
+    // 2분할: [-6, +6], 3분할: [-8, 0, +8], 5분할: [-10, -5, 0, +5, +10]
+    const lightnessRange = 10;
+    const offsets = [];
+    if (actualSplits === 1) {
+      offsets.push(0);
+    } else {
+      for (let i = 0; i < actualSplits; i++) {
+        const t = actualSplits === 1 ? 0 : (i / (actualSplits - 1)) * 2 - 1; // -1 ~ +1
+        offsets.push(Math.round(t * lightnessRange));
+      }
+    }
+
+    console.log(`   🔀 ${baseColor.hex} (${cellBrightness.length}셀) → ${actualSplits}분할`);
+
+    for (let s = 0; s < actualSplits; s++) {
+      const start = s * segmentSize;
+      const end = s === actualSplits - 1 ? cellBrightness.length : (s + 1) * segmentSize;
+      const segment = cellBrightness.slice(start, end);
+      if (segment.length === 0) continue;
+
+      const lightShift = offsets[s];
+      const satShift = Math.abs(s - Math.floor(actualSplits / 2)) * 2; // 중간이 가장 선명, 양 끝은 약간 탁하게
+      const subHsl = {
+        h: baseHsl.h,
+        s: Math.max(0, Math.min(100, baseHsl.s - satShift)),
+        l: Math.max(5, Math.min(95, baseHsl.l + lightShift)),
+      };
+      const subRgb = hslToRgb(subHsl.h, subHsl.s, subHsl.l);
+      const subHex = rgbToHex(subRgb.r, subRgb.g, subRgb.b);
+      const tone = lightShift < 0 ? '어두운' : lightShift > 0 ? '밝은' : '중간';
+
+      if (s === 0) {
+        // 첫 세그먼트(가장 어두운)는 원본 colorIndex 재사용
+        newDominantColors[colorIndex] = {
+          ...baseColor,
+          r: subRgb.r, g: subRgb.g, b: subRgb.b,
+          hex: subHex,
+          name: `${baseColor.name || '색상'} (${tone})`,
+        };
+      } else {
+        // 신규 colorIndex 할당
+        const newColor = {
+          id: null, // PlayScreen에서 재할당됨
+          r: subRgb.r, g: subRgb.g, b: subRgb.b,
+          hex: subHex,
+          name: `${baseColor.name || '색상'} (${tone})`,
+        };
+        newDominantColors.push(newColor);
+        const newIdx = nextColorIndex++;
+
+        console.log(`     → ${subHex} (${segment.length}셀, idx=${newIdx}, L${lightShift > 0 ? '+' : ''}${lightShift})`);
+
+        // 해당 세그먼트의 셀을 새 colorIndex로 변경
+        for (const cell of segment) {
+          newGridColors[cell.row][cell.col] = newIdx;
+        }
+      }
+    }
+  }
+
+  console.log(`🎨 색상 분할 완료: ${dominantColors.length}색 → ${newDominantColors.length}색`);
+  return { gridColors: newGridColors, dominantColors: newDominantColors };
+}
+
+/**
  * 픽셀 데이터에 색칠하기 최적화 적용
  * ★★★ 채도 강화로 더 진하고 선명한 색상 생성
  * @param {Uint8Array} pixelData - RGBA 픽셀 데이터
@@ -807,9 +984,9 @@ async function extractGridColors(imageUri, gridSize, imageSize, colorCount) {
 function optimizePixelsForColoring(pixelData, width, height) {
   const optimized = new Uint8Array(pixelData.length);
 
-  // 🎨 채도/명도 미세 조정 (원본에 가깝게)
-  const SATURATION_BOOST = 1.3;  // 채도 30% 증가 (자연스럽게)
-  const VALUE_BOOST = 0.95;       // 명도 5% 감소 (약간만 어둡게)
+  // 🎨 채도 강화 + 밝기 증가 (선명하고 밝은 색감)
+  const SATURATION_BOOST = 1.8;  // 채도 80% 증가 (선명하게)
+  const VALUE_BOOST = 1.15;      // 명도 15% 증가 (밝게)
 
   for (let i = 0; i < pixelData.length; i += 4) {
     const r = pixelData[i];

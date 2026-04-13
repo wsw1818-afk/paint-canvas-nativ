@@ -5,6 +5,12 @@ import { loadPuzzles, deletePuzzle, updatePuzzle } from '../utils/puzzleStorage'
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 import { SpotifyColors, SpotifyFonts, SpotifySpacing, SpotifyRadius } from '../theme/spotify';
+import { processImage } from '../utils/imageProcessor';
+import { getGalleryImageMode } from '../utils/zoomSettings';
+import { getPoints } from '../utils/pointsStorage';
+import EmptyState from '../components/common/EmptyState';
+import { GalleryCardSkeletonList } from '../components/common/LoadingSkeleton';
+import Button from '../components/common/Button';
 
 // 🐛 썸네일 이미지 컴포넌트 - 로드 실패 시 자동 fallback + 파일 존재 확인
 function ThumbnailImage({ uri, fallbackUri, puzzleId, progress }) {
@@ -86,7 +92,26 @@ export default function GalleryScreen({ navigation }) {
 
   // 🎨 텍스처 선택 모달 상태
   const [showTextureModal, setShowTextureModal] = useState(false);
-  const [pendingPuzzle, setPendingPuzzle] = useState(null);  // 텍스처 선택 후 시작할 퍼즐
+  const [pendingPuzzle, setPendingPuzzle] = useState(null);
+  // 📱 갤러리 이미지 모드 (original/progress)
+  const [galleryImageMode, setGalleryImageModeState] = useState('original');
+  // 💰 포인트
+  const [points, setPoints] = useState(0);
+
+  // 화면 포커스 시마다 설정 리로드 (설정 변경 반영)
+  useEffect(() => {
+    getGalleryImageMode().then(setGalleryImageModeState).catch(() => {});
+    getPoints().then(setPoints).catch(() => {});
+    try {
+      const unsubscribe = navigation.addListener('focus', () => {
+        getGalleryImageMode().then(setGalleryImageModeState).catch(() => {});
+        getPoints().then(setPoints).catch(() => {});
+      });
+      return unsubscribe;
+    } catch (e) {
+      // navigation listener 실패 시 무시
+    }
+  }, [navigation]);
 
   // 🐛 자동 복구 상태 (컴포넌트 최상단에 선언)
   const [repairQueue, setRepairQueue] = useState([]);  // 복구 대기열
@@ -115,6 +140,10 @@ export default function GalleryScreen({ navigation }) {
 
   const loadSavedPuzzles = async () => {
     try {
+      // 갤러리 이미지 모드도 함께 로드
+      const mode = await getGalleryImageMode().catch(() => 'original');
+      setGalleryImageModeState(mode);
+
       const savedPuzzles = await loadPuzzles();
 
       // 🐛 격자선 버그 수정: completedImageUri 검증 및 복구
@@ -293,7 +322,7 @@ export default function GalleryScreen({ navigation }) {
 
 
   // 🎨 텍스처 선택 완료 핸들러
-  const handleTextureSelect = useCallback((texture) => {
+  const handleTextureSelect = useCallback(async (texture) => {
     console.log('[GalleryScreen] 🎨 handleTextureSelect 호출됨:', JSON.stringify({
       textureId: texture?.id,
       textureName: texture?.name,
@@ -331,6 +360,43 @@ export default function GalleryScreen({ navigation }) {
         textureSelected: true  // 🎨 최초 텍스처 선택 완료 플래그
       }).catch(err => console.error('[GalleryScreen] ❌ 텍스처 정보 저장 실패:', err));
 
+      // 📱 격자 처리가 필요한 퍼즐 (needsProcessing)
+      if (pendingPuzzle.needsProcessing && !pendingPuzzle.gridColors) {
+        setLoading(true);
+        try {
+          const imageUri = pendingPuzzle.imageUri || pendingPuzzle.imageBase64;
+          const optimizedSize = pendingPuzzle.gridSize >= 100 ? 256 : 1024;
+          const result = await processImage(imageUri, pendingPuzzle.gridSize, pendingPuzzle.colorCount, optimizedSize);
+          await updatePuzzle(pendingPuzzle.id, {
+            gridColors: result.gridColors,
+            dominantColors: result.dominantColors,
+            needsProcessing: false,
+            completionMode: completionMode,
+            textureUri: textureUri,
+            textureSelected: true,
+          });
+          setLoading(false);
+          showPuzzleSelectAd(() => {
+            navigation.navigate('Play', {
+              puzzleId: pendingPuzzle.id,
+              imageUri: imageUri,
+              colorCount: pendingPuzzle.colorCount,
+              gridSize: pendingPuzzle.gridSize,
+              gridColors: result.gridColors,
+              dominantColors: result.dominantColors,
+              completionMode: completionMode,
+              textureUri: textureUri,
+              isReset: true,
+            });
+          });
+        } catch (error) {
+          setLoading(false);
+          console.error('[GalleryScreen] 이미지 처리 실패:', error);
+        }
+        setPendingPuzzle(null);
+        return;
+      }
+
       showPuzzleSelectAd(() => {
         navigation.navigate('Play', {
           puzzleId: pendingPuzzle.id,
@@ -356,7 +422,7 @@ export default function GalleryScreen({ navigation }) {
   };
 
   // 📢 퍼즐 선택 핸들러 (3회마다 전면 광고)
-  const handlePuzzleSelect = useCallback((puzzle, completionMode) => {
+  const handlePuzzleSelect = useCallback(async (puzzle, completionMode) => {
     // 🎨 최초 실행 시 텍스처 선택 모달 표시 (textureSelected 플래그로 판단)
     // - textureSelected가 없거나 false면 최초 실행 → 텍스처 선택 모달
     // - textureSelected가 true면 이미 선택됨 → 바로 플레이
@@ -370,7 +436,43 @@ export default function GalleryScreen({ navigation }) {
 
     // 🎨 저장된 textureUri 사용 (리셋 없이 이어하기)
     const textureUri = puzzle.textureUri || null;
-    console.log('[GalleryScreen] 📌 퍼즐 선택:', puzzle.id, 'completionMode:', completionMode, 'textureUri:', textureUri);
+    console.log('[GalleryScreen] 📌 퍼즐 선택:', puzzle.id, 'completionMode:', completionMode, 'needsProcessing:', puzzle.needsProcessing);
+
+    // 📱 격자 처리가 필요한 퍼즐 (기본 퍼즐 최초 선택)
+    if (puzzle.needsProcessing && !puzzle.gridColors) {
+      setLoading(true);
+      try {
+        const imageUri = puzzle.imageUri || puzzle.imageBase64;
+        const optimizedSize = puzzle.gridSize >= 100 ? 256 : 1024;
+        const result = await processImage(imageUri, puzzle.gridSize, puzzle.colorCount, optimizedSize);
+
+        // 처리 결과 저장
+        await updatePuzzle(puzzle.id, {
+          gridColors: result.gridColors,
+          dominantColors: result.dominantColors,
+          needsProcessing: false,
+        });
+
+        setLoading(false);
+        showPuzzleSelectAd(() => {
+          navigation.navigate('Play', {
+            puzzleId: puzzle.id,
+            imageUri: imageUri,
+            colorCount: puzzle.colorCount,
+            gridSize: puzzle.gridSize,
+            gridColors: result.gridColors,
+            dominantColors: result.dominantColors,
+            completionMode: completionMode,
+            textureUri: textureUri
+          });
+        });
+      } catch (error) {
+        setLoading(false);
+        console.error('[GalleryScreen] 이미지 처리 실패:', error);
+        Alert.alert('오류', '이미지 처리에 실패했습니다.');
+      }
+      return;
+    }
 
     showPuzzleSelectAd(() => {
       navigation.navigate('Play', {
@@ -390,44 +492,58 @@ export default function GalleryScreen({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={SpotifyColors.background} />
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        {/* Header */}
+        {/* Header - Gallery는 홈 역할, 설정+포인트+새퍼즐 */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButtonContainer}>
-            <Text style={styles.backButton}>‹</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings')}
+            style={styles.headerIconButton}
+            accessibilityLabel="설정"
+            accessibilityRole="button"
+          >
+            <Text style={styles.headerIcon}>⚙️</Text>
           </TouchableOpacity>
+
           <View style={styles.headerCenter}>
             <Text style={styles.title}>{t('gallery.title')}</Text>
             <Text style={styles.headerSubtitle}>{t('gallery.itemCount', { count: puzzles.length })}</Text>
           </View>
-          <View style={styles.headerRight} />
+
+          <View style={styles.headerActions}>
+            <View
+              style={styles.pointsBadge}
+              accessibilityLabel={`보유 포인트 ${points.toLocaleString()}`}
+              accessibilityRole="text"
+            >
+              <Text style={styles.pointsIcon}>💰</Text>
+              <Text style={styles.pointsText}>{points.toLocaleString()}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* New Puzzle CTA - 갤러리 상단 고정 */}
+        <View style={styles.newPuzzleWrap}>
+          <Button
+            title="+ 새 퍼즐 만들기"
+            onPress={() => navigation.navigate('Generate')}
+            variant="primary"
+            size="md"
+            fullWidth
+            accessibilityLabel="새 퍼즐 만들기"
+          />
         </View>
 
           {/* Puzzle List */}
           <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {loading ? (
-          // 🎯 스켈레톤 플레이스홀더 - 즉각적인 UI 반응
-          <View>
-            {[1, 2, 3].map((i) => (
-              <View key={i} style={styles.skeletonCard}>
-                <View style={styles.skeletonImage} />
-                <View style={styles.skeletonInfo}>
-                  <View style={styles.skeletonTitle} />
-                  <View style={styles.skeletonSubtext} />
-                  <View style={styles.skeletonProgress} />
-                </View>
-              </View>
-            ))}
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="small" color="#FFFFFF" />
-              <Text style={styles.loadingText}>{t('common.loading')}</Text>
-            </View>
-          </View>
+          <GalleryCardSkeletonList count={6} />
         ) : puzzles.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>🎨</Text>
-            <Text style={styles.emptyTitle}>{t('gallery.emptyTitle')}</Text>
-            <Text style={styles.emptyDesc}>{t('gallery.emptyDesc')}</Text>
-          </View>
+          <EmptyState
+            icon="🎨"
+            title="첫 퍼즐을 만들어보세요"
+            description="갤러리에서 사진을 선택하면 색칠할 퍼즐이 만들어져요. 47개의 기본 퍼즐도 곧 준비됩니다."
+            actionLabel="새 퍼즐 만들기"
+            onAction={() => navigation.navigate('Generate')}
+          />
         ) : (
           <Animated.View style={{ opacity: fadeAnim }}>
           {puzzles.map((puzzle) => {
@@ -437,16 +553,13 @@ export default function GalleryScreen({ navigation }) {
               ? { icon: '🖼️', name: t('gallery.modeOriginal'), color: '#FF6B6B' }
               : { icon: '🧶', name: t('gallery.modeWeave'), color: '#9B59B6' };
 
-            // 썸네일 이미지 우선순위:
-            // 1. 완성 이미지 (100% 완료된 퍼즐)
-            // 2. 진행 썸네일 (색칠 진행 중인 상태)
-            // 3. 최적화된 썸네일 (새로 생성된 퍼즐)
-            // 4. 원본 이미지 (기존 퍼즐 하위 호환)
-            const thumbnailUri = puzzle.completedImageUri
-              ? puzzle.completedImageUri
-              : puzzle.progressThumbnailUri
-                ? puzzle.progressThumbnailUri
-                : (puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64);
+            // 📱 갤러리 이미지 모드에 따라 썸네일 결정
+            const originalUri = puzzle.thumbnailUri || puzzle.imageUri || puzzle.imageBase64;
+            const hasProgressImage = !!(puzzle.completedImageUri || puzzle.progressThumbnailUri);
+            const progressUri = puzzle.completedImageUri || puzzle.progressThumbnailUri || null;
+            const thumbnailUri = (galleryImageMode === 'progress' && hasProgressImage)
+              ? progressUri
+              : originalUri;
 
             // 🐛 디버깅: 어떤 타입의 이미지를 사용하는지 확인
             const imageType = puzzle.completedImageUri ? 'COMPLETED' 
@@ -470,8 +583,11 @@ export default function GalleryScreen({ navigation }) {
                 <TouchableOpacity
                   style={styles.puzzleCardContent}
                   onPress={() => handlePuzzleSelect(puzzle, completionMode)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${puzzle.title || '퍼즐'}, ${Math.round(puzzle.progress || 0)}퍼센트 완료, 난이도 ${difficultyInfo.name}`}
+                  accessibilityHint="탭하여 퍼즐 시작"
                 >
-                  {/* 이미지 썸네일 - WEAVE 모드면 위빙 미리보기, 아니면 원본 */}
+                  {/* 이미지 썸네일 */}
                   <View style={styles.thumbnailContainer}>
                     <ThumbnailImage
                       key={`thumb-${puzzle.id}`}
@@ -480,10 +596,22 @@ export default function GalleryScreen({ navigation }) {
                       puzzleId={puzzle.id}
                       progress={puzzle.progress}
                     />
-                    {/* 진행 썸네일이 없고 완성도가 100% 미만일 때만 음영 오버레이 표시 */}
-                    {/* 🐛 버그 수정: 100% 완료된 퍼즐은 음영 표시 안함 (completedImageUri 유무와 관계없이) */}
-                    {Math.round(puzzle.progress || 0) < 100 && !puzzle.progressThumbnailUri && (
-                      <View style={styles.thumbnailShadowOverlay} />
+                    {/* 진행률 숫자 오버레이 */}
+                    {Math.round(puzzle.progress || 0) > 0 && Math.round(puzzle.progress || 0) < 100 && (
+                      <View style={styles.progressOverlay}>
+                        <Text style={styles.progressOverlayText}>{Math.round(puzzle.progress)}%</Text>
+                      </View>
+                    )}
+                    {Math.round(puzzle.progress || 0) >= 100 && (
+                      <View style={styles.completedOverlay}>
+                        <Text style={styles.completedOverlayText}>✓</Text>
+                      </View>
+                    )}
+                    {/* 진행중 모드인데 진행 이미지 없는 경우 오버레이 */}
+                    {galleryImageMode === 'progress' && !hasProgressImage && Math.round(puzzle.progress || 0) === 0 && (
+                      <View style={styles.noProgressOverlay}>
+                        <Text style={styles.noProgressText}>NEW</Text>
+                      </View>
                     )}
                   </View>
 
@@ -574,9 +702,45 @@ const styles = StyleSheet.create({
   headerCenter: {
     flex: 1,
     alignItems: 'center',
+    paddingHorizontal: SpotifySpacing.sm,
   },
   headerRight: {
     width: 40,
+  },
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerIcon: {
+    fontSize: 22,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pointsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: SpotifyColors.backgroundElevated,
+    paddingHorizontal: SpotifySpacing.sm,
+    paddingVertical: 6,
+    borderRadius: SpotifyRadius.full,
+    minHeight: 32,
+  },
+  pointsIcon: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  pointsText: {
+    fontSize: SpotifyFonts.sm,
+    fontWeight: SpotifyFonts.bold,
+    color: SpotifyColors.textPrimary,
+  },
+  newPuzzleWrap: {
+    paddingHorizontal: SpotifySpacing.base,
+    paddingVertical: SpotifySpacing.md,
   },
   title: {
     fontSize: SpotifyFonts.lg,
@@ -659,6 +823,50 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.85)',
     borderRadius: SpotifyRadius.md,
+  },
+  progressOverlay: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  progressOverlayText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  completedOverlay: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: '#4CD964',
+    borderRadius: 10,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  completedOverlayText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  noProgressOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    borderRadius: SpotifyRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noProgressText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: 'bold',
+    letterSpacing: 1,
   },
   actionButtons: {
     flexDirection: 'column',

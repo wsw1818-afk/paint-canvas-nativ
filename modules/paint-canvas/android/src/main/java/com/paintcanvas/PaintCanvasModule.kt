@@ -117,6 +117,10 @@ class PaintCanvasModule : Module() {
         view.setMaxZoomLevel(level.toFloat())
       }
 
+      Prop("showGridLines") { view: PaintCanvasView, show: Boolean ->
+        view.setShowGridLines(show)
+      }
+
       // zoomTrigger 제거 - maxZoomLevel에 소수점 카운터 포함하여 항상 변경 감지
 
       // 🎨 사용자 선택 텍스처 URI

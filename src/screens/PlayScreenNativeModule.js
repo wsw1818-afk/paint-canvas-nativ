@@ -10,7 +10,10 @@ import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { showPuzzleCompleteAd, showBackNavigationAd } from '../utils/adManager';
 import { t, addLanguageChangeListener } from '../locales';
 import { addPoints, getPuzzleCost } from '../utils/pointsStorage';
-import { ZOOM_PRESETS, getZoomPresetId, getZoomPreset } from '../utils/zoomSettings';
+import { ZOOM_PRESETS, getZoomPresetId, getZoomPreset, getGridLinesEnabled } from '../utils/zoomSettings';
+import PlayTutorial from '../components/PlayTutorial';
+import CompletionOverlay from '../components/CompletionOverlay';
+import { Share } from 'react-native';
 
 // 🎯 광고 ID 설정
 // - 정식 ID (플레이스토어): 'ca-app-pub-8246295829048098/7057199542'
@@ -40,6 +43,13 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted,
   const sizeOverride = tabletSize ? { width: tabletSize, height: tabletSize } : null;
   const fontOverride = tabletSize ? { fontSize: tabletSize > 28 ? 11 : 9 } : null;
 
+  const a11yState = isSelected
+    ? ', 선택됨'
+    : isCompleted
+    ? ', 완료됨'
+    : '';
+  const a11yLabel = `${color.name || `색상 ${color.id}`} ${color.id}${a11yState}`;
+
   return (
     <TouchableOpacity
       style={[
@@ -51,6 +61,10 @@ const ColorButton = memo(({ color, isSelected, onSelect, luminance, isCompleted,
       ]}
       onPress={onSelect}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+      accessibilityState={{ selected: isSelected, disabled: isCompleted }}
+      hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }}
     >
       {/* 완료된 색상은 라벨 숨김, 원색만 표시 */}
       {!isCompleted && (
@@ -243,15 +257,17 @@ export default function PlayScreenNativeModule({ route, navigation }) {
   // 🔍 줌 배율 설정
   const [currentMaxZoom, setCurrentMaxZoom] = useState(9);
   const [currentZoomPresetId, setCurrentZoomPresetId] = useState('medium');
-  const [zoomTrigger, setZoomTrigger] = useState(0); // prop 변경 감지용 카운터
+  const [zoomTrigger, setZoomTrigger] = useState(0);
+  const [showGridLines, setShowGridLines] = useState(false);
 
-  // 줌 설정 로드
+  // 줌 + 격자선 설정 로드
   useEffect(() => {
     getZoomPresetId().then(id => {
       const preset = getZoomPreset(id);
       setCurrentMaxZoom(preset.maxZoom);
       setCurrentZoomPresetId(id);
     });
+    getGridLinesEnabled().then(setShowGridLines);
   }, []);
 
   // 🔍 디버그 로그 상태 (프로덕션에서는 비활성화)
@@ -502,6 +518,10 @@ export default function PlayScreenNativeModule({ route, navigation }) {
 
   // 🖼️ 100% 완성 시 캡처 및 저장 (한 번만 실행)
   const hasCompletedRef = useRef(false);
+  // 🎉 완성 오버레이 상태
+  const [completionData, setCompletionData] = useState(null);
+  // ⏱️ 색칠 시작 시각 (경과 시간 계산용)
+  const startTimeRef = useRef(Date.now());
 
   const captureAndSaveCompletion = useCallback(async () => {
     if (hasCompletedRef.current || !puzzleId) return;
@@ -567,13 +587,15 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           return;
         }
 
-        // 📢 퍼즐 완료 시 전면 광고 표시 후 알림
+        // 📢 퍼즐 완료 시 전면 광고 표시 후 완성 오버레이
         showPuzzleCompleteAd(() => {
-          Alert.alert(
-            t('play.completeTitle'),
-            t('play.completeMessage', { reward: completionReward, percent: scorePercent }),
-            [{ text: t('common.confirm'), style: 'default' }]
-          );
+          const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
+          setCompletionData({
+            imageUri: fileUri,
+            puzzleTitle: `퍼즐 · ${scorePercent}% 정확도`,
+            elapsed,
+            pointsEarned: completionReward,
+          });
         });
       } else {
         console.warn('⚠️ 캔버스 캡처 실패 (null 반환)');
@@ -1300,6 +1322,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
               viewSize={viewDimensions}
               completionMode={completionMode}
               maxZoomLevel={currentMaxZoom + zoomTrigger * 0.001}
+              showGridLines={showGridLines}
               clearProgress={isReset || false}
               onCellPainted={handleCellPainted}
               onCanvasReady={handleCanvasReady}
@@ -1418,6 +1441,7 @@ export default function PlayScreenNativeModule({ route, navigation }) {
             viewSize={viewDimensions}
             completionMode={completionMode}
             maxZoomLevel={currentMaxZoom}
+            showGridLines={showGridLines}
             clearProgress={isReset || false}
             onCellPainted={handleCellPainted}
             onCanvasReady={handleCanvasReady}
@@ -1617,6 +1641,36 @@ export default function PlayScreenNativeModule({ route, navigation }) {
           </ScrollView>
         </View>
       )}
+
+      {/* 🎓 첫 진입 튜토리얼 - 캔버스 로딩 완료 후에만 표시 */}
+      <PlayTutorial ready={isNativeReady} />
+
+      {/* 🎉 퍼즐 완성 풀스크린 오버레이 */}
+      <CompletionOverlay
+        visible={completionData !== null}
+        imageUri={completionData?.imageUri}
+        puzzleTitle={completionData?.puzzleTitle}
+        elapsed={completionData?.elapsed}
+        pointsEarned={completionData?.pointsEarned}
+        onNext={() => {
+          setCompletionData(null);
+          navigation.navigate('Gallery');
+        }}
+        onShare={async () => {
+          if (completionData?.imageUri) {
+            try {
+              await Share.share({
+                url: completionData.imageUri,
+                message: '색칠 완성!',
+              });
+            } catch (e) {}
+          }
+        }}
+        onGallery={() => {
+          setCompletionData(null);
+          navigation.navigate('Gallery');
+        }}
+      />
 
     </SafeAreaView>
   );

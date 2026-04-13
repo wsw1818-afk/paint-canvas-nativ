@@ -34,3 +34,48 @@ export async function setZoomPresetId(presetId) {
 export function getZoomPreset(presetId) {
   return ZOOM_PRESETS.find(p => p.id === presetId) || ZOOM_PRESETS[1];
 }
+
+// 갤러리 이미지 모드 (원본/진행중)
+const GALLERY_IMAGE_MODE_KEY = '@gallery_image_mode';
+
+export const GALLERY_IMAGE_MODES = [
+  { id: 'original', label: '원본 이미지' },
+  { id: 'progress', label: '진행중 이미지' },
+];
+
+export async function getGalleryImageMode() {
+  try {
+    const mode = await AsyncStorage.getItem(GALLERY_IMAGE_MODE_KEY);
+    return mode || 'original';
+  } catch {
+    return 'original';
+  }
+}
+
+export async function setGalleryImageMode(mode) {
+  try {
+    await AsyncStorage.setItem(GALLERY_IMAGE_MODE_KEY, mode);
+  } catch (e) {
+    // 저장 실패 무시
+  }
+}
+
+// 격자선 표시 설정
+const GRID_LINES_KEY = '@grid_lines_enabled';
+
+export async function getGridLinesEnabled() {
+  try {
+    const val = await AsyncStorage.getItem(GRID_LINES_KEY);
+    return val === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function setGridLinesEnabled(enabled) {
+  try {
+    await AsyncStorage.setItem(GRID_LINES_KEY, enabled ? 'true' : 'false');
+  } catch (e) {
+    // 저장 실패 무시
+  }
+}

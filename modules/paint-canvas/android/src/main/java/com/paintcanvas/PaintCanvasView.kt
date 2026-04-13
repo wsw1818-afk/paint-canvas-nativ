@@ -163,6 +163,16 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
         }
     }
 
+    // 📱 격자선 표시 여부
+    private var showGridLines = false
+
+    fun setShowGridLines(show: Boolean) {
+        if (showGridLines != show) {
+            showGridLines = show
+            invalidate()
+        }
+    }
+
     // 📱 현재 maxZoom으로 즉시 줌 적용 (zoomTrigger prop에서 호출)
     fun applyCurrentZoom() {
         if (canvasWidth > 0 && canvasViewWidth > 0) {
@@ -1238,8 +1248,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
             }
         }
 
-        // 3. 격자선 그리기 (확대 시에만 표시 - 셀이 20px 이상일 때)
-        if (screenCellSize > 20f) {
+        // 3. 격자선 그리기 (showGridLines=true + 확대 시에만)
+        if (showGridLines && screenCellSize > 20f) {
             gridPaint.strokeWidth = if (screenCellSize > 40f) 0.5f else 0.3f
             gridPaint.alpha = if (screenCellSize > 40f) 80 else 40
             for (row in startRow..endRow + 1) {
@@ -3004,13 +3014,18 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                         val idx = row * localGridSize + col
                         tempFilledIndices.add(idx)
 
-                        val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
-                        if (savedColor != 0) {
+                        // 🐛 저장된 색상 복원 (0x00000000=검정도 유효한 색상)
+                        if (colorMapObj != null && colorMapObj.has(cellKey)) {
+                            val savedColor = colorMapObj.getInt(cellKey)
                             tempColorMapInt[idx] = savedColor
                             tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
+                        } else {
+                            // 색상 정보 없으면 정답 색상으로 대체
+                            val targetColor = currentParsedColors[idx]
+                            if (targetColor != null) {
+                                tempColorMapInt[idx] = targetColor
+                            }
                         }
-                        // 🐛 버그 수정: savedColor가 0이면 색상 정보 없음 (정답 색상으로 대체하지 않음)
-                        // 정답 색상은 onDraw에서 parsedColorMap에서 직접 가져옴
                     }
                 }
 
@@ -3026,8 +3041,8 @@ class PaintCanvasView(context: Context, appContext: AppContext) : ExpoView(conte
                             val idx = row * localGridSize + col
                             tempWrongIndices.add(idx)
 
-                            val savedColor = colorMapObj?.optInt(cellKey, 0) ?: 0
-                            if (savedColor != 0) {
+                            if (colorMapObj != null && colorMapObj.has(cellKey)) {
+                                val savedColor = colorMapObj.getInt(cellKey)
                                 tempColorMapInt[idx] = savedColor
                                 tempColorMap[cellKey] = String.format("#%06X", 0xFFFFFF and savedColor)
                             }
